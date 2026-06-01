@@ -1,0 +1,599 @@
+"""
+Video-to-Text Transcription Service
+=====================================
+Chuyển đổi video thành text sử dụng Vosk (offline, không cần AI API).
+Hỗ trợ video dài (40+ phút) bằng cách xử lý theo từng chunk.
+
+Yêu cầu:
+  - FFmpeg đã cài đặt và có trong PATH
+  - Python 3.8+
+  - Các thư viện: xem requirements.txt
+"""
+
+import os
+import sys
+import json
+import time
+import wave
+import shutil
+import logging
+import argparse
+import tempfile
+import subprocess
+from pathlib import Path
+from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+# Đảm bảo terminal Windows không bị lỗi hiển thị ký tự Unicode tiếng Việt
+if sys.stdout.encoding != 'utf-8':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+if sys.stderr.encoding != 'utf-8':
+    try:
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
+# ---------------------------------------------------------------------------
+# Cài đặt logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
+
+# ===========================================================================
+# Bước 1: Trích xuất audio từ video bằng FFmpeg
+# ===========================================================================
+
+def find_ffmpeg() -> str:
+    """Tự động tìm kiếm đường dẫn FFmpeg nếu không có trong PATH."""
+    # 1. Kiểm tra trong PATH hệ thống
+    if shutil.which("ffmpeg"):
+        return "ffmpeg"
+
+    # 2. Tìm kiếm trong thư mục Packages/Links của WinGet
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    if local_appdata:
+        winget_packages = Path(local_appdata) / "Microsoft" / "WinGet" / "Packages"
+        if winget_packages.exists():
+            ffmpeg_exes = list(winget_packages.glob("**/ffmpeg.exe"))
+            if ffmpeg_exes:
+                log.info(f"Tìm thấy FFmpeg tại WinGet Packages: {ffmpeg_exes[0]}")
+                return str(ffmpeg_exes[0])
+
+        winget_links = Path(local_appdata) / "Microsoft" / "WinGet" / "Links" / "ffmpeg.exe"
+        if winget_links.exists():
+            log.info(f"Tìm thấy FFmpeg tại WinGet Links: {winget_links}")
+            return str(winget_links)
+
+    # 3. Tìm kiếm trong Program Files
+    program_files = os.environ.get("ProgramFiles", "")
+    if program_files:
+        ffmpeg_pf = Path(program_files) / "FFmpeg" / "bin" / "ffmpeg.exe"
+        if ffmpeg_pf.exists():
+            log.info(f"Tìm thấy FFmpeg tại Program Files: {ffmpeg_pf}")
+            return str(ffmpeg_pf)
+
+    return "ffmpeg"
+
+
+def extract_audio(video_path: str, output_wav: str, sample_rate: int = 16000) -> str:
+    """
+    Trích xuất audio từ video và chuyển thành WAV PCM 16-bit mono.
+
+    Parameters
+    ----------
+    video_path  : Đường dẫn file video đầu vào
+    output_wav  : Đường dẫn file WAV đầu ra
+    sample_rate : Sample rate (Hz) — Vosk thường dùng 16000
+
+    Returns
+    -------
+    Đường dẫn file WAV đã tạo
+    """
+    ffmpeg_exe = find_ffmpeg()
+    
+    # Kiểm tra xem có chạy được không
+    if ffmpeg_exe == "ffmpeg" and not shutil.which("ffmpeg"):
+        raise EnvironmentError(
+            "FFmpeg không tìm thấy trong PATH hoặc thư mục cài đặt mặc định.\n"
+            "Tải tại: https://ffmpeg.org/download.html"
+        )
+
+    cmd = [
+        ffmpeg_exe,
+        "-y",                        # overwrite nếu tồn tại
+        "-i", video_path,            # file đầu vào
+        "-vn",                       # bỏ stream video
+        "-acodec", "pcm_s16le",      # PCM 16-bit little-endian
+        "-ar", str(sample_rate),     # sample rate
+        "-ac", "1",                  # mono
+        output_wav,
+    ]
+
+    log.info(f"Đang trích xuất audio từ: {video_path}")
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"FFmpeg lỗi:\n{result.stderr}")
+
+    log.info(f"Audio đã lưu tại: {output_wav}")
+    return output_wav
+
+
+# ===========================================================================
+# Bước 2: Chia audio thành chunks
+# ===========================================================================
+
+def split_wav_into_chunks(wav_path: str, chunk_dir: str, chunk_duration_sec: int = 60) -> list[str]:
+    """
+    Chia file WAV thành nhiều chunk nhỏ để xử lý song song.
+
+    Parameters
+    ----------
+    wav_path          : File WAV đầu vào
+    chunk_dir         : Thư mục lưu các chunk
+    chunk_duration_sec: Độ dài mỗi chunk (giây), mặc định 60s
+
+    Returns
+    -------
+    Danh sách đường dẫn các file chunk theo thứ tự
+    """
+    os.makedirs(chunk_dir, exist_ok=True)
+    chunk_paths = []
+
+    with wave.open(wav_path, "rb") as wf:
+        sample_rate   = wf.getframerate()
+        n_channels    = wf.getnchannels()
+        sampwidth     = wf.getsampwidth()
+        total_frames  = wf.getnframes()
+        frames_per_chunk = sample_rate * chunk_duration_sec
+
+        chunk_idx = 0
+        frames_read = 0
+
+        while frames_read < total_frames:
+            frames = wf.readframes(frames_per_chunk)
+            if not frames:
+                break
+
+            chunk_path = os.path.join(chunk_dir, f"chunk_{chunk_idx:04d}.wav")
+            with wave.open(chunk_path, "wb") as cw:
+                cw.setnchannels(n_channels)
+                cw.setsampwidth(sampwidth)
+                cw.setframerate(sample_rate)
+                cw.writeframes(frames)
+
+            chunk_paths.append(chunk_path)
+            frames_read += frames_per_chunk
+            chunk_idx   += 1
+
+    log.info(f"Đã chia thành {len(chunk_paths)} chunks ({chunk_duration_sec}s/chunk)")
+    return chunk_paths
+
+
+# ===========================================================================
+# Bước 3: Nhận dạng giọng nói bằng Vosk
+# ===========================================================================
+
+def transcribe_chunk_vosk(chunk_path: str, model) -> tuple[int, str]:
+    """
+    Nhận dạng giọng nói một chunk bằng Vosk.
+
+    Parameters
+    ----------
+    chunk_path : Đường dẫn file WAV chunk
+    model      : Đối tượng vosk.Model đã load
+
+    Returns
+    -------
+    (chunk_index, text) — index lấy từ tên file
+    """
+    from vosk import KaldiRecognizer  # import ở đây để tránh lỗi nếu không cài
+
+    chunk_idx = int(Path(chunk_path).stem.split("_")[1])
+    text_parts = []
+
+    with wave.open(chunk_path, "rb") as wf:
+        sample_rate = wf.getframerate()
+        rec = KaldiRecognizer(model, sample_rate)
+        rec.SetWords(True)          # kèm thông tin từng từ (tuỳ chọn)
+
+        while True:
+            data = wf.readframes(4000)
+            if not data:
+                break
+            if rec.AcceptWaveform(data):
+                result = json.loads(rec.Result())
+                text_parts.append(result.get("text", ""))
+
+        # Lấy phần cuối còn lại
+        final = json.loads(rec.FinalResult())
+        text_parts.append(final.get("text", ""))
+
+    return chunk_idx, " ".join(t for t in text_parts if t)
+
+
+# ===========================================================================
+# Bước 4: Nhận dạng bằng SpeechRecognition (fallback / Google Web Speech)
+# ===========================================================================
+
+def transcribe_chunk_sr(chunk_path: str) -> tuple[int, str]:
+    """
+    Fallback: Dùng SpeechRecognition + Google Web Speech API.
+    Cần kết nối internet.
+    """
+    import speech_recognition as sr
+
+    chunk_idx = int(Path(chunk_path).stem.split("_")[1])
+    recognizer = sr.Recognizer()
+
+    with sr.AudioFile(chunk_path) as source:
+        audio = recognizer.record(source)
+
+    try:
+        text = recognizer.recognize_google(audio, language="vi-VN")
+    except sr.UnknownValueError:
+        text = ""
+    except sr.RequestError as e:
+        log.warning(f"Chunk {chunk_idx}: Google API lỗi — {e}")
+        text = ""
+
+    return chunk_idx, text
+
+
+# ===========================================================================
+# Lớp chính: VideoTranscriber
+# ===========================================================================
+
+class VideoTranscriber:
+    """
+    Service chuyển đổi video thành text.
+
+    Parameters
+    ----------
+    model_path      : Đường dẫn thư mục model Vosk
+                      (None = dùng fallback SpeechRecognition)
+    language        : Ngôn ngữ cho SpeechRecognition (vd: "vi-VN", "en-US")
+    chunk_duration  : Độ dài mỗi chunk tính bằng giây
+    max_workers     : Số luồng song song xử lý chunks
+    sample_rate     : Sample rate audio (Hz)
+    """
+
+    def __init__(
+        self,
+        model_path: Optional[str] = None,
+        language: str = "vi-VN",
+        chunk_duration: int = 60,
+        max_workers: int = 4,
+        sample_rate: int = 16000,
+    ):
+        self.model_path     = model_path
+        self.language       = language
+        self.chunk_duration = chunk_duration
+        self.max_workers    = max_workers
+        self.sample_rate    = sample_rate
+        self._vosk_model    = None
+
+        if model_path:
+            self._load_vosk_model(model_path)
+
+    # ------------------------------------------------------------------
+    def _load_vosk_model(self, model_path: str):
+        try:
+            from vosk import Model, SetLogLevel
+            SetLogLevel(-1)  # Tắt log verbose của Vosk
+            log.info(f"Đang load Vosk model từ: {model_path}")
+            self._vosk_model = Model(model_path)
+            log.info("Vosk model đã sẵn sàng ✓")
+        except ImportError:
+            log.warning("Thư viện vosk chưa cài. Chạy: pip install vosk")
+            self._vosk_model = None
+        except Exception as e:
+            log.warning(f"Không load được Vosk model: {e}")
+            self._vosk_model = None
+
+    # ------------------------------------------------------------------
+    def transcribe(self, video_path: str, output_path: Optional[str] = None, progress_callback = None, engine: str = "vosk") -> str:
+        """
+        Chuyển đổi video thành text.
+
+        Parameters
+        ----------
+        video_path  : Đường dẫn file video
+        output_path : Nếu cung cấp, lưu kết quả vào file này
+        progress_callback: Hàm callback nhận vào (done_chunks, total_chunks) để cập nhật tiến trình
+        engine      : Công nghệ dịch ("vosk", "whisper", hoặc "google")
+
+        Returns
+        -------
+        Toàn bộ text nhận dạng được
+        """
+        video_path = str(Path(video_path).resolve())
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Không tìm thấy file: {video_path}")
+
+        start_time = time.time()
+        log.info(f"{'='*60}")
+        log.info(f"Bắt đầu xử lý: {Path(video_path).name} bằng công nghệ: {engine.upper()}")
+        log.info(f"{'='*60}")
+
+        with tempfile.TemporaryDirectory(prefix="video2text_") as tmp_dir:
+            # ── Bước 1: Trích xuất audio ──────────────────────────────
+            wav_path   = os.path.join(tmp_dir, "audio.wav")
+            extract_audio(video_path, wav_path, self.sample_rate)
+
+            # Lấy thời lượng video
+            duration = self._get_audio_duration(wav_path)
+            log.info(f"Thời lượng audio: {duration/60:.1f} phút")
+
+            # ── Bước 2 & 3: Nhận dạng tùy theo engine ────────────────
+            if engine.lower() == "whisper":
+                full_text = self._transcribe_whisper(wav_path, progress_callback)
+            else:
+                chunk_dir  = os.path.join(tmp_dir, "chunks")
+                chunk_paths = split_wav_into_chunks(wav_path, chunk_dir, self.chunk_duration)
+
+                results = {}
+                if engine.lower() == "vosk" and self._vosk_model:
+                    log.info(f"Dùng Vosk (offline) — {len(chunk_paths)} chunks, {self.max_workers} luồng")
+                    results = self._transcribe_parallel_vosk(chunk_paths, progress_callback)
+                else:
+                    log.info(f"Dùng SpeechRecognition (Google) — {len(chunk_paths)} chunks, {self.max_workers} luồng")
+                    results = self._transcribe_parallel_sr(chunk_paths, progress_callback)
+                
+                full_text = self._merge_results(results)
+
+        elapsed = time.time() - start_time
+        # Định dạng văn bản: mỗi câu xuống một dòng
+        full_text = self._format_by_sentences(full_text)
+        word_count = len(full_text.split())
+        log.info(f"{'='*60}")
+        log.info(f"Hoàn thành trong {elapsed:.1f}s — {word_count} từ")
+        log.info(f"{'='*60}")
+
+        # ── Bước 5: Lưu file (tuỳ chọn) ──────────────────────────────
+        if output_path:
+            self._save_output(full_text, output_path, video_path, elapsed, word_count)
+
+        return full_text
+
+    # ------------------------------------------------------------------
+    def _transcribe_whisper(self, wav_path: str, progress_callback = None) -> str:
+        """Nhận dạng offline cực kỳ chính xác bằng mô hình Whisper cục bộ."""
+        log.info("Đang khởi tạo local Whisper Model (dung lượng base ~140MB)...")
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError:
+            raise ImportError("Vui lòng cài đặt: pip install faster-whisper")
+
+        # Khởi tạo model base chạy trên CPU tối ưu hóa bằng int8
+        model = WhisperModel("base", device="cpu", compute_type="int8")
+        
+        duration = self._get_audio_duration(wav_path)
+        log.info(f"Bắt đầu dịch offline với Whisper (Tổng thời lượng audio: {int(duration)}s)...")
+        
+        # Nhận dạng giọng nói (Whisper tự lọc tạp âm/nhạc nền và nhận dạng có dấu chuẩn xác)
+        segments, info = model.transcribe(wav_path, beam_size=5, language="vi")
+        
+        text_parts = []
+        for segment in segments:
+            text_parts.append(segment.text)
+            # Cập nhật tiến trình theo thời gian thực (giây đã dịch / tổng giây)
+            if progress_callback and duration > 0:
+                try:
+                    done_sec = min(int(segment.end), int(duration))
+                    progress_callback(done_sec, int(duration))
+                except Exception as e:
+                    log.warning(f"Lỗi progress_callback Whisper: {e}")
+                    
+        return " ".join(text_parts)
+
+    # ------------------------------------------------------------------
+    def _transcribe_parallel_vosk(self, chunk_paths: list[str], progress_callback = None) -> dict[int, str]:
+        results = {}
+        model   = self._vosk_model
+        total   = len(chunk_paths)
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(transcribe_chunk_vosk, cp, model): cp
+                for cp in chunk_paths
+            }
+            for future in as_completed(futures):
+                idx, text = future.result()
+                results[idx] = text
+                done = len(results)
+                log.info(f"  [{done:3d}/{total}] chunk_{idx:04d} — {len(text.split())} từ")
+                if progress_callback:
+                    try:
+                        progress_callback(done, total)
+                    except Exception as e:
+                        log.warning(f"Lỗi progress_callback: {e}")
+
+        return results
+
+    # ------------------------------------------------------------------
+    def _transcribe_parallel_sr(self, chunk_paths: list[str], progress_callback = None) -> dict[int, str]:
+        results = {}
+        total   = len(chunk_paths)
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(transcribe_chunk_sr, cp): cp
+                for cp in chunk_paths
+            }
+            for future in as_completed(futures):
+                idx, text = future.result()
+                results[idx] = text
+                done = len(results)
+                log.info(f"  [{done:3d}/{total}] chunk_{idx:04d} — {len(text.split())} từ")
+                if progress_callback:
+                    try:
+                        progress_callback(done, total)
+                    except Exception as e:
+                        log.warning(f"Lỗi progress_callback: {e}")
+
+        return results
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _merge_results(results: dict[int, str]) -> str:
+        """Ghép các đoạn text theo thứ tự chunk index."""
+        ordered = [results[k] for k in sorted(results.keys())]
+        # Loại bỏ đoạn rỗng, ghép bằng khoảng trắng
+        return " ".join(part for part in ordered if part.strip())
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _get_audio_duration(wav_path: str) -> float:
+        """Trả về thời lượng file WAV tính bằng giây."""
+        with wave.open(wav_path, "rb") as wf:
+            return wf.getnframes() / wf.getframerate()
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _save_output(
+        text: str,
+        output_path: str,
+        source_video: str,
+        elapsed: float,
+        word_count: int,
+    ):
+        """Lưu text và metadata ra file."""
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(f"# Transcript — {Path(source_video).name}\n")
+            f.write(f"# Thời gian xử lý : {elapsed:.1f}s\n")
+            f.write(f"# Số từ           : {word_count}\n")
+            f.write(f"# Tạo lúc         : {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 60 + "\n\n")
+            f.write(text)
+        log.info(f"Đã lưu transcript tại: {output_path}")
+
+    @staticmethod
+    def _format_by_sentences(text: str) -> str:
+        """
+        Chia văn bản thành các câu riêng biệt, viết hoa chữ cái đầu và xuống dòng cho mỗi câu.
+        """
+        if not text:
+            return ""
+        
+        import re
+        # Tách câu theo các dấu kết thúc câu (. hoặc ? hoặc !), đồng thời giữ lại các dấu này
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        
+        formatted_sentences = []
+        for s in sentences:
+            s = s.strip()
+            if not s:
+                continue
+            # Viết hoa chữ cái đầu tiên của câu
+            if len(s) > 1:
+                s = s[0].upper() + s[1:]
+            else:
+                s = s.upper()
+            formatted_sentences.append(s)
+            
+        return "\n".join(formatted_sentences)
+
+
+# ===========================================================================
+# CLI
+# ===========================================================================
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="transcriber",
+        description="Chuyển đổi video thành text (offline với Vosk hoặc qua Google Web Speech)",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    p.add_argument(
+        "video",
+        help="Đường dẫn file video đầu vào (mp4, mkv, avi, mov, ...)",
+    )
+    p.add_argument(
+        "-o", "--output",
+        default=None,
+        help="Đường dẫn file text đầu ra (mặc định: <tên_video>.txt)",
+    )
+    p.add_argument(
+        "-m", "--model",
+        default=None,
+        help=(
+            "Đường dẫn thư mục Vosk model (offline).\n"
+            "Tải model tại: https://alphacephei.com/vosk/models\n"
+            "  Tiếng Việt  : vosk-model-vn-0.4\n"
+            "  Tiếng Anh   : vosk-model-en-us-0.22\n"
+            "Nếu bỏ qua, dùng Google Web Speech API (cần internet)."
+        ),
+    )
+    p.add_argument(
+        "--lang",
+        default="vi-VN",
+        help="Ngôn ngữ cho Google Speech (vd: vi-VN, en-US). Mặc định: vi-VN",
+    )
+    p.add_argument(
+        "--chunk",
+        type=int,
+        default=60,
+        help="Độ dài mỗi chunk tính bằng giây. Mặc định: 60",
+    )
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Số luồng xử lý song song. Mặc định: 4",
+    )
+    p.add_argument(
+        "--rate",
+        type=int,
+        default=16000,
+        help="Sample rate audio (Hz). Mặc định: 16000",
+    )
+    return p
+
+
+def main():
+    parser = build_parser()
+    args   = parser.parse_args()
+
+    # Xác định file đầu ra
+    output = args.output
+    if output is None:
+        stem   = Path(args.video).stem
+        output = str(Path(args.video).parent / f"{stem}_transcript.txt")
+
+    # Khởi tạo transcriber
+    transcriber = VideoTranscriber(
+        model_path    = args.model,
+        language      = args.lang,
+        chunk_duration= args.chunk,
+        max_workers   = args.workers,
+        sample_rate   = args.rate,
+    )
+
+    # Chạy
+    text = transcriber.transcribe(args.video, output_path=output)
+
+    # In ra màn hình (truncate nếu quá dài)
+    print("\n" + "="*60)
+    print("TRANSCRIPT (500 ký tự đầu):")
+    print("="*60)
+    print(text[:500])
+    if len(text) > 500:
+        print(f"\n... (còn {len(text)-500} ký tự nữa, xem file: {output})")
+
+
+if __name__ == "__main__":
+    main()

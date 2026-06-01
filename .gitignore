@@ -1,0 +1,42 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Audio/Video files (large files)
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.wav
+*.mp3
+
+# Models & Downloads (do not upload large Vosk models to GitHub)
+models/*.zip
+models/vosk-model-*/
+.huggingface/
+huggingface/
+
+# Uploads directory
+uploads/
+
+# User transcripts (output files)
+*_transcript.txt
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo

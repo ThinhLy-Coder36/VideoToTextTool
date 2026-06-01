@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video to Text Converter - Premium Offline Service</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0c10;
+            --card-bg: rgba(22, 26, 37, 0.65);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --primary-glow: rgba(99, 102, 241, 0.35);
+            --accent: #10b981;
+            --accent-glow: rgba(16, 185, 129, 0.25);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.06) 0%, transparent 40%);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem 1rem;
+            overflow-x: hidden;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 960px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        header h1 {
+            font-size: 2.8rem;
+            font-weight: 700;
+            letter-spacing: -1px;
+            background: linear-gradient(135deg, #fff 30%, #a5b4fc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        header p {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            font-weight: 400;
+        }
+
+        /* Glassmorphism Card Style */
+        .glass-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            backdrop-filter: blur(16px);
+            border-radius: 24px;
+            padding: 2.5rem;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            margin-bottom: 2rem;
+            animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        /* Tabs setup */
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 0.35rem;
+            border-radius: 14px;
+            margin-bottom: 2rem;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .tab-btn {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 0.75rem 1rem;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.95rem;
+            transition: all 0.25s ease;
+        }
+
+        .tab-btn.active {
+            background: var(--primary);
+            color: #fff;
+            box-shadow: 0 4px 12px var(--primary-glow);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        /* Input / Drag & Drop Design */
+        .drag-area {
+            border: 2px dashed rgba(99, 102, 241, 0.3);
+            border-radius: 18px;
+            padding: 3rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: rgba(99, 102, 241, 0.01);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .drag-area:hover, .drag-area.dragover {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.04);
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.1);
+        }
+
+        .drag-area svg {
+            width: 48px;
+            height: 48px;
+            stroke: var(--primary);
+            margin-bottom: 1rem;
+            transition: transform 0.3s ease;
+        }
+
+        .drag-area:hover svg {
+            transform: translateY(-5px);
+        }
+
+        .drag-area p {
+            font-size: 1.05rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .drag-area span {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .path-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .path-input-group label {
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        .input-field {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 1rem 1.25rem;
+            color: #fff;
+            font-size: 1rem;
+            width: 100%;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .input-field:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 12px var(--primary-glow);
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        /* Config Grid */
+        .config-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .config-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .config-item label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        select {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 0.9rem 1.25rem;
+            color: #fff;
+            font-size: 0.95rem;
+            outline: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 12px var(--primary-glow);
+        }
+
+        /* Action Buttons */
+        .btn-submit {
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            border-radius: 14px;
+            padding: 1.1rem;
+            font-size: 1.05rem;
+            font-weight: 600;
+            width: 100%;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 24px var(--primary-glow);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .btn-submit:hover {
+            background: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 12px 28px var(--primary-glow);
+        }
+
+        .btn-submit:active {
+            transform: translateY(0);
+        }
+
+        /* Active Task Cards */
+        .tasks-section {
+            margin-top: 2rem;
+        }
+
+        .section-title {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .task-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 18px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        .task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .task-name {
+            font-weight: 600;
+            font-size: 1.1rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 60%;
+        }
+
+        .task-badge {
+            padding: 0.35rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-running {
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--primary);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+        }
+
+        .badge-success {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--accent);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .badge-failed {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        /* Progress Bar */
+        .progress-container {
+            width: 100%;
+        }
+
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .progress-track {
+            background: rgba(255, 255, 255, 0.05);
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, var(--primary), var(--accent));
+            height: 100%;
+            width: 0%;
+            border-radius: 4px;
+            transition: width 0.4s ease;
+            box-shadow: 0 0 8px rgba(99, 102, 241, 0.5);
+        }
+
+        /* Live log preview */
+        .log-preview {
+            background: #000;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #10b981;
+            max-height: 80px;
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        /* Result Panel */
+        .result-viewer {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .result-textarea {
+            width: 100%;
+            height: 250px;
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 1.25rem;
+            color: #e5e7eb;
+            font-size: 0.95rem;
+            line-height: 1.6;
+            resize: vertical;
+            outline: none;
+        }
+
+        .result-textarea:focus {
+            border-color: var(--primary);
+        }
+
+        .button-row {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .btn-secondary {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            color: #fff;
+            border-radius: 12px;
+            padding: 0.85rem;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            .config-grid {
+                grid-template-columns: 1fr;
+            }
+            .button-row {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>Offline Transcription Service</h1>
+        <p>Hỗ trợ video lên tới 40 phút - Xử lý đa luồng siêu tốc</p>
+    </header>
+
+    <!-- Main Transcription Hub -->
+    <div class="glass-card">
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('path')">Sử dụng File Path (Nhanh nhất)</button>
+            <button class="tab-btn" onclick="switchTab('upload')">Kéo & Thả Video</button>
+        </div>
+
+        <form id="transcribe-form" onsubmit="submitForm(event)">
+            <!-- TAB Content 1: Local Path -->
+            <div id="tab-path" class="tab-content active">
+                <div class="path-input-group">
+                    <label for="video-path">Đường dẫn file video trên máy tính của bạn:</label>
+                    <input type="text" id="video-path" class="input-field" placeholder="Ví dụ: E:\Downloads\meeting.mp4">
+                    <span style="font-size: 0.8rem; color: var(--text-muted); margin-top: -0.25rem;">
+                        ⚠️ Ưu tiên dán đường dẫn trực tiếp đối với video dung lượng lớn để tránh tải tệp tốn dung lượng bộ nhớ.
+                    </span>
+                </div>
+            </div>
+
+            <!-- TAB Content 2: Drag & Drop Upload -->
+            <div id="tab-upload" class="tab-content">
+                <div class="drag-area" id="drop-zone" onclick="document.getElementById('file-input').click()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    <p id="upload-status">Kéo & Thả video của bạn vào đây hoặc click để chọn tệp</p>
+                    <span>Hỗ trợ MP4, MKV, AVI, MOV...</span>
+                    <input type="file" id="file-input" class="file-input" accept="video/*" onchange="handleFileSelect(event)">
+                </div>
+            </div>
+
+            <!-- Configurations -->
+            <div class="config-grid">
+                <div class="config-item">
+                    <label for="engine">Công nghệ nhận dạng:</label>
+                    <select id="engine">
+                        <option value="whisper" selected>Whisper - Tiếng Việt (Offline 100% - Khuyên dùng)</option>
+                        <option value="vosk">Vosk - Tiếng Việt (Offline 100% - Tốc độ nhanh)</option>
+                        <option value="google">Google Cloud Speech (Trực tuyến - Cần Internet)</option>
+                    </select>
+                </div>
+                <div class="config-item">
+                    <label for="workers">Số luồng CPU (Parallel Workers):</label>
+                    <select id="workers">
+                        <option value="2">2 Luồng (Tiết kiệm CPU)</option>
+                        <option value="4" selected>4 Luồng (Khuyên dùng)</option>
+                        <option value="6">6 Luồng (Hiệu năng cao)</option>
+                        <option value="8">8 Luồng (Tối đa tốc độ)</option>
+                    </select>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-submit" id="submit-btn">
+                <span>Bắt đầu chuyển đổi Video thành Văn bản</span>
+            </button>
+        </form>
+    </div>
+
+    <!-- Active Tasks Section -->
+    <div class="tasks-section" id="tasks-section" style="display: none;">
+        <h2 class="section-title">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" style="vertical-align: middle;">
+                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+            </svg>
+            Tiến trình chuyển đổi
+        </h2>
+        <div id="tasks-container"></div>
+    </div>
+</div>
+
+<script>
+    let activeTab = 'path';
+    let selectedFile = null;
+    let pollInterval = null;
+
+    function switchTab(tab) {
+        activeTab = tab;
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+        
+        event.target.classList.add('active');
+        document.getElementById(`tab-${tab}`).classList.add('active');
+    }
+
+    // Drag and drop events
+    const dropZone = document.getElementById('drop-zone');
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+        }, false);
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        if (files.length) {
+            handleFiles(files[0]);
+        }
+    });
+
+    function handleFileSelect(e) {
+        if (e.target.files.length) {
+            handleFiles(e.target.files[0]);
+        }
+    }
+
+    function handleFiles(file) {
+        selectedFile = file;
+        document.getElementById('upload-status').innerText = `Đã chọn: ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)`;
+    }
+
+    async function submitForm(event) {
+        event.preventDefault();
+        
+        const engine = document.getElementById('engine').value;
+        const workers = document.getElementById('workers').value;
+        const submitBtn = document.getElementById('submit-btn');
+        
+        const formData = new FormData();
+        formData.append('engine', engine);
+        formData.append('workers', workers);
+
+        if (activeTab === 'path') {
+            const pathVal = document.getElementById('video-path').value.trim();
+            if (!pathVal) {
+                alert('Vui lòng nhập đường dẫn video!');
+                return;
+            }
+            formData.append('video_path', pathVal);
+        } else {
+            if (!selectedFile) {
+                alert('Vui lòng chọn hoặc kéo thả một video!');
+                return;
+            }
+            formData.append('file', selectedFile);
+        }
+
+        try {
+            submitBtn.disabled = true;
+            submitBtn.innerText = 'Đang gửi yêu cầu...';
+            
+            const response = await fetch('/api/transcribe', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+                document.getElementById('tasks-section').style.display = 'block';
+                startPolling(data.task_id);
+            } else {
+                alert(`Lỗi: ${data.detail || 'Không thể tạo task'}`);
+            }
+        } catch (error) {
+            alert(`Lỗi kết nối: ${error.message}`);
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<span>Bắt đầu chuyển đổi Video thành Văn bản</span>';
+        }
+    }
+
+    function startPolling(taskId) {
+        if (pollInterval) clearInterval(pollInterval);
+        
+        // Initial build of card
+        updateTaskUI(taskId, {
+            status: 'processing',
+            filename: activeTab === 'path' ? document.getElementById('video-path').value.split('\\').pop() : selectedFile.name,
+            progress: 0,
+            total: 0,
+            text: ''
+        });
+
+        pollInterval = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/status/${taskId}`);
+                if (res.ok) {
+                    const statusData = await res.json();
+                    updateTaskUI(taskId, statusData);
+                    
+                    if (statusData.status === 'completed' || statusData.status === 'failed') {
+                        clearInterval(pollInterval);
+                    }
+                }
+            } catch (err) {
+                console.error("Lỗi polling: ", err);
+            }
+        }, 1000);
+    }
+
+    function updateTaskUI(taskId, task) {
+        const container = document.getElementById('tasks-container');
+        let card = document.getElementById(`task-${taskId}`);
+        
+        const pct = task.total > 0 ? Math.round((task.progress / task.total) * 100) : 0;
+        
+        if (!card) {
+            card = document.createElement('div');
+            card.id = `task-${taskId}`;
+            card.className = 'task-card';
+            container.appendChild(card);
+        }
+
+        let badgeClass = 'badge-running';
+        let badgeText = 'Đang xử lý';
+        if (task.status === 'completed') {
+            badgeClass = 'badge-success';
+            badgeText = 'Hoàn thành';
+        } else if (task.status === 'failed') {
+            badgeClass = 'badge-failed';
+            badgeText = 'Thất bại';
+        }
+
+        let innerHTML = `
+            <div class="task-header">
+                <span class="task-name" title="${task.filename}">${task.filename}</span>
+                <span class="task-badge ${badgeClass}">${badgeText}</span>
+            </div>
+            
+            <div class="progress-container">
+                <div class="progress-info">
+                    <span>Đã xử lý ${task.progress}/${task.total} phân đoạn</span>
+                    <span>${pct}%</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width: ${pct}%"></div>
+                </div>
+            </div>
+        `;
+
+        if (task.status === 'completed') {
+            innerHTML += `
+                <div class="result-viewer">
+                    <textarea class="result-textarea" readonly id="text-${taskId}">${task.text}</textarea>
+                    <div class="button-row">
+                        <button class="btn-secondary" onclick="copyText('text-${taskId}')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            Sao chép văn bản
+                        </button>
+                        <button class="btn-secondary" onclick="downloadText('${task.filename}', 'text-${taskId}')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            Tải file .txt
+                        </button>
+                    </div>
+                </div>
+            `;
+        } else if (task.status === 'failed') {
+            innerHTML += `
+                <div class="log-preview" style="color: #ef4444; background: rgba(239, 68, 68, 0.05);">
+                    Lỗi: ${task.error}
+                </div>
+            `;
+        } else {
+            // Processing state logs
+            const selectedEngine = document.getElementById('engine').value.toUpperCase();
+            innerHTML += `
+                <div class="log-preview">
+                    [System] Đang trích xuất và xử lý âm thanh WAV...<br>
+                    [${selectedEngine}] Đang chạy mô hình nhận dạng giọng nói offline/online... (Tiến trình: ${pct}%)
+                </div>
+            `;
+        }
+
+        card.innerHTML = innerHTML;
+    }
+
+    function copyText(id) {
+        const textarea = document.getElementById(id);
+        textarea.select();
+        document.execCommand('copy');
+        alert('Đã sao chép văn bản vào clipboard!');
+    }
+
+    function downloadText(filename, id) {
+        const text = document.getElementById(id).value;
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${filename.split('.')[0]}_transcript.txt`;
+        link.click();
+    }
+</script>
+</body>
+</html>
