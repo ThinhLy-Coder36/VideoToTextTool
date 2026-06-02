@@ -291,6 +291,7 @@ class VideoTranscriber:
         self.whisper_model_size = whisper_model_size
         self._vosk_model    = None
         self._whisper_model_instance = whisper_model_instance
+        self.key_status_callback = None
 
         if model_path:
             self._load_vosk_model(model_path)
@@ -533,6 +534,8 @@ class VideoTranscriber:
                     if response.status_code == 429:
                         log.warning(f"API Key thứ {idx + 1} bị lỗi Rate Limit (HTTP 429 - Hết hạn mức). Đang chuyển sang key tiếp theo...")
                         last_error = "Rate Limit (HTTP 429)"
+                        if getattr(self, "key_status_callback", None):
+                            self.key_status_callback(key, "Rate Limited")
                         # Quay lại file pointer về đầu để gửi lại
                         f.seek(0)
                         continue
@@ -540,12 +543,19 @@ class VideoTranscriber:
                     if response.status_code != 200:
                         log.warning(f"API Key thứ {idx + 1} trả về lỗi HTTP {response.status_code}: {response.text}. Đang chuyển sang key tiếp theo...")
                         last_error = f"HTTP {response.status_code}: {response.text}"
+                        if getattr(self, "key_status_callback", None):
+                            self.key_status_callback(key, "Rate Limited")
                         f.seek(0)
                         continue
                         
                     # Thành công! Parse kết quả
                     result = response.json()
                     log.info(f"Dịch thành công bằng Groq API với Key thứ {idx + 1} ✓")
+                    
+                    # Tính toán thời lượng để trừ quota
+                    duration = self._get_audio_duration(wav_path)
+                    if getattr(self, "key_status_callback", None):
+                        self.key_status_callback(key, "Active", duration)
                     
                     full_text = result.get("text", "").strip()
                     raw_segments = result.get("segments", [])

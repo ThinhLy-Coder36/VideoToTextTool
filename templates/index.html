@@ -590,6 +590,17 @@
                 </div>
             </div>
 
+            <!-- Groq Quota Display -->
+            <div id="groq-quota-container" style="display: none; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 18px; padding: 1.25rem; margin-bottom: 2rem; text-align: left;">
+                <div style="font-size: 0.9rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="width: 8px; height: 8px; background: #10b981; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);"></span>
+                    Hạn mức Groq Whisper API (Hôm nay)
+                </div>
+                <div id="groq-keys-list" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <!-- Rendered by JS -->
+                </div>
+            </div>
+
             <button type="submit" class="btn-submit" id="submit-btn">
                 <span>Bắt đầu chuyển đổi Video thành Văn bản</span>
             </button>
@@ -627,11 +638,68 @@
         } else {
             container.style.display = 'none';
         }
+        fetchQuotaStatus();
+    }
+
+    async function fetchQuotaStatus() {
+        const engine = document.getElementById('engine').value;
+        const container = document.getElementById('groq-quota-container');
+        if (engine !== 'groq') {
+            if (container) container.style.display = 'none';
+            return;
+        }
+        
+        try {
+            const res = await fetch('/api/quota');
+            if (res.ok) {
+                const data = await res.json();
+                const list = document.getElementById('groq-keys-list');
+                if (!list) return;
+                list.innerHTML = '';
+                
+                if (data.keys && data.keys.length > 0) {
+                    if (container) container.style.display = 'block';
+                    data.keys.forEach((key, idx) => {
+                        const remainingMin = (key.remaining_seconds / 60).toFixed(1);
+                        const limitMin = (key.limit_seconds / 60).toFixed(0);
+                        const pct = Math.round((key.remaining_seconds / key.limit_seconds) * 100);
+                        
+                        let statusBadge = `<span style="color: #10b981; background: rgba(16, 185, 129, 0.1); padding: 0.2rem 0.5rem; border-radius: 6px; font-weight: 600; font-size: 0.75rem;">ĐANG HOẠT ĐỘNG</span>`;
+                        if (key.status === 'Rate Limited') {
+                            statusBadge = `<span style="color: #ef4444; background: rgba(239, 68, 68, 0.1); padding: 0.2rem 0.5rem; border-radius: 6px; font-weight: 600; font-size: 0.75rem;">HẾT HẠN MỨC (429)</span>`;
+                        }
+                        
+                        const keyItem = document.createElement('div');
+                        keyItem.style = "display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 0.75rem 1rem; border-radius: 12px; border: 1px solid var(--border-color);";
+                        keyItem.innerHTML = `
+                            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                                <span style="font-weight: 600; color: #f3f4f6; font-size: 0.9rem;">Tài khoản ${idx + 1}: <span style="font-family: monospace; color: var(--primary); font-size: 0.95rem;">${key.masked}</span></span>
+                                <span style="color: var(--text-muted); font-size: 0.8rem;">Còn lại khoảng: <strong style="color: #fff;">${remainingMin} phút</strong> / ${limitMin} phút (${pct}%)</span>
+                            </div>
+                            <div>
+                                ${statusBadge}
+                            </div>
+                        `;
+                        list.appendChild(keyItem);
+                    });
+                } else {
+                    if (container) container.style.display = 'block';
+                    const warningDiv = document.createElement('div');
+                    warningDiv.style = "color: #ef4444; font-size: 0.85rem; padding: 0.75rem; background: rgba(239, 68, 68, 0.05); border-radius: 10px; border: 1px solid rgba(239,68,68,0.2); text-align: center; width: 100%;";
+                    warningDiv.innerText = "Chưa cấu hình GROQ_API_KEY. Hãy thêm key trong Space Settings.";
+                    list.appendChild(warningDiv);
+                }
+            }
+        } catch (err) {
+            console.error("Lỗi lấy thông tin quota: ", err);
+        }
     }
 
     // Khởi tạo trạng thái khi tải trang
     window.addEventListener('DOMContentLoaded', () => {
         toggleWhisperModel();
+        // Định kỳ lấy trạng thái quota mỗi 10 giây
+        setInterval(fetchQuotaStatus, 10000);
     });
 
     function formatTime(seconds) {
@@ -768,6 +836,7 @@
                     
                     if (statusData.status === 'completed' || statusData.status === 'failed') {
                         clearInterval(pollInterval);
+                        fetchQuotaStatus();
                     }
                 }
             } catch (err) {

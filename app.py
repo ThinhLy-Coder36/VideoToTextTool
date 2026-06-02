@@ -52,6 +52,36 @@ def get_cached_whisper_model(model_size: str):
 # task_id -> { "status": "processing/completed/failed", "filename": str, "progress": int, "total": int, "text": str, "error": str }
 tasks_db = {}
 
+# Lưu trữ trạng thái sử dụng của Groq API Key
+groq_keys_status = {}
+
+def init_groq_keys():
+    api_keys_str = os.getenv("GROQ_API_KEY", "")
+    keys = [k.strip() for k in api_keys_str.split(",") if k.strip()]
+    # Dọn dẹp các key không còn cấu hình
+    for k in list(groq_keys_status.keys()):
+        if k not in keys:
+            del groq_keys_status[k]
+    # Khởi tạo key mới
+    for k in keys:
+        if k not in groq_keys_status:
+            masked = f"{k[:7]}...{k[-4:]}" if len(k) > 10 else "Invalid Key"
+            groq_keys_status[k] = {
+                "masked": masked,
+                "used_seconds": 0.0,
+                "status": "Active",
+                "limit_seconds": 3600.0 # 60 phút
+            }
+
+def update_key_status(key, status, used_seconds=0.0):
+    init_groq_keys()
+    if key in groq_keys_status:
+        groq_keys_status[key]["status"] = status
+        groq_keys_status[key]["used_seconds"] += used_seconds
+        if groq_keys_status[key]["used_seconds"] >= groq_keys_status[key]["limit_seconds"]:
+            groq_keys_status[key]["status"] = "Rate Limited"
+        log.info(f"Cập nhật key {groq_keys_status[key]['masked']}: status={status}, used_seconds={used_seconds}")
+
 # Ensure required directories exist
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -91,6 +121,8 @@ def run_transcription_task(task_id: str, video_path: str, filename: str, engine:
             whisper_model_size=whisper_model,
             whisper_model_instance=whisper_model_instance
         )
+        if engine == "groq":
+            transcriber.key_status_callback = update_key_status
 
         log.info(f"Bắt đầu dịch task {task_id}: {filename}")
         
@@ -204,6 +236,22 @@ async def get_task_status(task_id: str):
     if task_id not in tasks_db:
         raise HTTPException(status_code=404, detail="Không tìm thấy task")
     return tasks_db[task_id]
+
+
+@app.get("/api/quota")
+async def get_quota_status():
+    """API lấy hạn mức sử dụng hiện tại của các Groq API Keys."""
+    init_groq_keys()
+    keys_info = []
+    for k, status in groq_keys_status.items():
+        remaining = max(0.0, status["limit_seconds"] - status["used_seconds"])
+        keys_info.append({
+            "masked": status["masked"],
+            "remaining_seconds": round(remaining, 2),
+            "limit_seconds": status["limit_seconds"],
+            "status": status["status"]
+        })
+    return {"keys": keys_info}
 
 
 @app.get("/api/audio/{task_id}")
