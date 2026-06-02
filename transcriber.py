@@ -362,7 +362,13 @@ class VideoTranscriber:
             results = {}
             segments_list = []
 
-            if engine.lower() == "whisper":
+            if engine.lower() == "groq":
+                log.info("Dùng Whisper Cloud API (Groq) — Tốc độ siêu tốc")
+                api_keys = self._whisper_model_instance
+                if not isinstance(api_keys, list):
+                    api_keys = [api_keys] if api_keys else []
+                full_text, segments_list = self._transcribe_whisper_via_groq_api(wav_path, api_keys, progress_callback)
+            elif engine.lower() == "whisper":
                 log.info("Dùng Whisper (offline) — Chạy tuần tự tối ưu hóa CPU")
                 model = self._get_whisper_model()
                 # Chạy dịch tuần tự trực tiếp trên file wav_path
@@ -484,6 +490,107 @@ class VideoTranscriber:
         
         full_text = "\n".join(full_text_parts)
         return full_text, segments_list
+
+    # ------------------------------------------------------------------
+    def _transcribe_whisper_via_groq_api(self, wav_path: str, api_keys: list[str], progress_callback=None) -> tuple[str, list[dict]]:
+        """
+        Dịch audio bằng Groq Whisper API (mô hình whisper-large-v3) siêu tốc.
+        Có cơ chế tự động xoay vòng API Keys khi gặp lỗi Rate Limit (HTTP 429).
+        """
+        import requests
+        
+        if not api_keys:
+            raise ValueError("Không tìm thấy Groq API Key nào trong cấu hình. Hãy thêm GROQ_API_KEY trong file .env hoặc Settings Space.")
+            
+        url = "https://api.groq.com/openai/v1/audio/transcriptions"
+        log.info(f"Bắt đầu dịch qua Groq Whisper API với danh sách {len(api_keys)} keys...")
+        
+        # Mở file audio
+        with open(wav_path, "rb") as f:
+            files = {
+                "file": (os.path.basename(wav_path), f, "audio/wav")
+            }
+            data = {
+                "model": "whisper-large-v3",
+                "response_format": "verbose_json",
+                "language": "vi"
+            }
+            
+            last_error = None
+            
+            # Thử từng key trong danh sách xoay vòng
+            for idx, key in enumerate(api_keys):
+                log.info(f"Đang thử sử dụng API Key thứ {idx + 1}...")
+                headers = {
+                    "Authorization": f"Bearer {key}"
+                }
+                
+                try:
+                    # Gửi yêu cầu API (timeout 60s phòng trường hợp file âm thanh lớn cần xử lý trên cloud)
+                    response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+                    
+                    # Nếu gặp lỗi Rate Limit (429) hoặc lỗi xác thực/quota (400/401/403...)
+                    if response.status_code == 429:
+                        log.warning(f"API Key thứ {idx + 1} bị lỗi Rate Limit (HTTP 429 - Hết hạn mức). Đang chuyển sang key tiếp theo...")
+                        last_error = "Rate Limit (HTTP 429)"
+                        # Quay lại file pointer về đầu để gửi lại
+                        f.seek(0)
+                        continue
+                        
+                    if response.status_code != 200:
+                        log.warning(f"API Key thứ {idx + 1} trả về lỗi HTTP {response.status_code}: {response.text}. Đang chuyển sang key tiếp theo...")
+                        last_error = f"HTTP {response.status_code}: {response.text}"
+                        f.seek(0)
+                        continue
+                        
+                    # Thành công! Parse kết quả
+                    result = response.json()
+                    log.info(f"Dịch thành công bằng Groq API với Key thứ {idx + 1} ✓")
+                    
+                    full_text = result.get("text", "").strip()
+                    raw_segments = result.get("segments", [])
+                    
+                    segments_list = []
+                    for seg in raw_segments:
+                        words_list = []
+                        if "words" in seg:
+                            for w in seg["words"]:
+                                words_list.append({
+                                    "word": w.get("word", "").strip(),
+                                    "start": round(w.get("start", 0), 2),
+                                    "end": round(w.get("end", 0), 2)
+                                })
+                        
+                        text = seg.get("text", "").strip()
+                        if text:
+                            if len(text) > 1:
+                                text = text[0].upper() + text[1:]
+                            else:
+                                text = text.upper()
+                                
+                            segments_list.append({
+                                "start": round(seg.get("start", 0), 2),
+                                "end": round(seg.get("end", 0), 2),
+                                "text": text,
+                                "words": words_list
+                            })
+                            
+                    if progress_callback:
+                        duration = self._get_audio_duration(wav_path)
+                        try:
+                            progress_callback(round(duration, 2), round(duration, 2))
+                        except Exception as e:
+                            log.warning(f"Lỗi progress_callback: {e}")
+                            
+                    return full_text, segments_list
+                    
+                except requests.exceptions.RequestException as req_err:
+                    log.warning(f"Lỗi kết nối khi gọi API với Key thứ {idx + 1}: {req_err}. Đang chuyển sang key tiếp theo...")
+                    last_error = str(req_err)
+                    f.seek(0)
+                    continue
+            
+            raise RuntimeError(f"Tất cả các Groq API Keys trong danh sách đều thất bại. Chi tiết lỗi cuối cùng: {last_error}")
 
     # ------------------------------------------------------------------
     def _transcribe_parallel_vosk(self, chunk_paths: list[str], progress_callback = None) -> dict[int, str]:

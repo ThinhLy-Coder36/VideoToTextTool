@@ -563,7 +563,8 @@
                 <div class="config-item">
                     <label for="engine">Công nghệ nhận dạng:</label>
                     <select id="engine" onchange="toggleWhisperModel()">
-                        <option value="whisper" selected>Whisper - Tiếng Việt (Offline 100% - Khuyên dùng)</option>
+                        <option value="groq" selected>Whisper Cloud API (Groq - Siêu tốc - Cần Internet)</option>
+                        <option value="whisper">Whisper Local (Máy cá nhân - Offline 100%)</option>
                         <option value="vosk">Vosk - Tiếng Việt (Offline 100% - Tốc độ nhanh)</option>
                         <option value="google">Google Cloud Speech (Trực tuyến - Cần Internet)</option>
                     </select>
@@ -875,7 +876,9 @@
             let modelInfo = '';
             if (selectedEngine === 'WHISPER') {
                 const modelSize = document.getElementById('whisper-model').value.toUpperCase();
-                modelInfo = ` (Mô hình: ${modelSize})`;
+                modelInfo = ` (Mô hình: Local ${modelSize})`;
+            } else if (selectedEngine === 'GROQ') {
+                modelInfo = ' (Mô hình: Cloud Large-V3)';
             }
 
             // Xác định dòng text hài hước dựa trên phần trăm tiến trình

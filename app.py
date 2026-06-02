@@ -78,6 +78,10 @@ def run_transcription_task(task_id: str, video_path: str, filename: str, engine:
         whisper_model_instance = None
         if engine == "whisper":
             whisper_model_instance = get_cached_whisper_model(whisper_model)
+        elif engine == "groq":
+            # Đọc danh sách API Keys ngăn cách bằng dấu phẩy
+            api_keys_str = os.getenv("GROQ_API_KEY", "")
+            whisper_model_instance = [k.strip() for k in api_keys_str.split(",") if k.strip()]
             
         transcriber = VideoTranscriber(
             model_path=model_dir,
