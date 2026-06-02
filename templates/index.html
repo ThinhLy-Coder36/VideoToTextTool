@@ -528,24 +528,13 @@
     <!-- Main Transcription Hub -->
     <div class="glass-card">
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('path')">Sử dụng File Path (Nhanh nhất)</button>
-            <button class="tab-btn" onclick="switchTab('upload')">Kéo & Thả Video</button>
+            <button class="tab-btn active" onclick="switchTab('upload')">Kéo & Thả Video</button>
+            <button class="tab-btn" onclick="switchTab('path')">Sử dụng File Path (Nhanh nhất)</button>
         </div>
 
         <form id="transcribe-form" onsubmit="submitForm(event)">
-            <!-- TAB Content 1: Local Path -->
-            <div id="tab-path" class="tab-content active">
-                <div class="path-input-group">
-                    <label for="video-path">Đường dẫn file video trên máy tính của bạn:</label>
-                    <input type="text" id="video-path" class="input-field" placeholder="Ví dụ: E:\Downloads\meeting.mp4">
-                    <span style="font-size: 0.8rem; color: var(--text-muted); margin-top: -0.25rem;">
-                        ⚠️ Ưu tiên dán đường dẫn trực tiếp đối với video dung lượng lớn để tránh tải tệp tốn dung lượng bộ nhớ.
-                    </span>
-                </div>
-            </div>
-
-            <!-- TAB Content 2: Drag & Drop Upload -->
-            <div id="tab-upload" class="tab-content">
+            <!-- TAB Content 1: Drag & Drop Upload -->
+            <div id="tab-upload" class="tab-content active">
                 <div class="drag-area" id="drop-zone" onclick="document.getElementById('file-input').click()">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -555,6 +544,17 @@
                     <p id="upload-status">Kéo & Thả video của bạn vào đây hoặc click để chọn tệp</p>
                     <span>Hỗ trợ MP4, MKV, AVI, MOV...</span>
                     <input type="file" id="file-input" class="file-input" accept="video/*" onchange="handleFileSelect(event)">
+                </div>
+            </div>
+
+            <!-- TAB Content 2: Local Path -->
+            <div id="tab-path" class="tab-content">
+                <div class="path-input-group">
+                    <label for="video-path">Đường dẫn file video trên máy tính của bạn:</label>
+                    <input type="text" id="video-path" class="input-field" placeholder="Ví dụ: E:\Downloads\meeting.mp4">
+                    <span style="font-size: 0.8rem; color: var(--text-muted); margin-top: -0.25rem;">
+                        ⚠️ Ưu tiên dán đường dẫn trực tiếp đối với video dung lượng lớn để tránh tải tệp tốn dung lượng bộ nhớ.
+                    </span>
                 </div>
             </div>
 
@@ -626,7 +626,7 @@
 </div>
 
 <script>
-    let activeTab = 'path';
+    let activeTab = 'upload';
     let selectedFile = null;
     let pollInterval = null;
 
