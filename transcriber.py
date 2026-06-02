@@ -385,6 +385,11 @@ class VideoTranscriber:
                     
                     for chunk_idx, cp in enumerate(chunk_paths):
                         log.info(f"Đang dịch chunk {chunk_idx + 1}/{total_chunks} qua Groq API...")
+                        
+                        # Khoảng nghỉ ngắn để tránh lỗi quá số lượt yêu cầu trong 1 phút (RPM Rate Limit) của Groq
+                        if chunk_idx > 0:
+                            time.sleep(1.2)
+                            
                         try:
                             chunk_text, chunk_segs = self._transcribe_whisper_via_groq_api(
                                 cp, 
