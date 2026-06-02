@@ -284,8 +284,8 @@ async def export_docx(task_id: str):
     if task["status"] != "completed":
         raise HTTPException(status_code=400, detail="Task chưa hoàn thành để xuất file")
         
-    text = task["text"]
     filename = task["filename"]
+    segments = task.get("segments", [])
     
     import docx
     import time
@@ -297,11 +297,35 @@ async def export_docx(task_id: str):
     doc.add_paragraph(f"Thời gian tạo: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     doc.add_paragraph("-" * 40)
     
-    for line in text.split("\n"):
-        line = line.strip()
-        if line:
-            doc.add_paragraph(line)
+    if segments:
+        for seg in segments:
+            # Tính toán timestamp format [mm:ss]
+            start_sec = seg.get("start", 0)
+            mins = int(start_sec // 60)
+            secs = int(start_sec % 60)
+            time_str = f"[{mins:02d}:{secs:02d}]"
             
+            # Lấy text tương ứng (ưu tiên ghép từ words nếu có để đồng bộ 100% với UI)
+            if "words" in seg and seg["words"]:
+                seg_text = " ".join(w["word"] for w in seg["words"])
+            else:
+                seg_text = seg.get("text", "")
+                
+            p = doc.add_paragraph()
+            # Thêm timestamp dạng in đậm
+            run_time = p.add_run(f"{time_str}  ")
+            run_time.bold = True
+            
+            # Thêm văn bản
+            p.add_run(seg_text)
+    else:
+        # Fallback nếu không có dữ liệu segments
+        text = task.get("text", "")
+        for line in text.split("\n"):
+            line = line.strip()
+            if line:
+                doc.add_paragraph(line)
+                
     file_stream = BytesIO()
     doc.save(file_stream)
     file_stream.seek(0)
