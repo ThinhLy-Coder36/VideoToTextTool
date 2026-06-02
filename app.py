@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 # Tự động đọc file .env ở local nếu có
@@ -272,6 +272,53 @@ async def get_audio(task_id: str):
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Không tìm thấy tệp âm thanh")
     return FileResponse(audio_path, media_type="audio/wav")
+
+
+@app.get("/api/export/docx/{task_id}")
+async def export_docx(task_id: str):
+    """Xuất văn bản nhận dạng dưới dạng file Word (.docx)."""
+    if task_id not in tasks_db:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thông tin task")
+        
+    task = tasks_db[task_id]
+    if task["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Task chưa hoàn thành để xuất file")
+        
+    text = task["text"]
+    filename = task["filename"]
+    
+    import docx
+    import time
+    from io import BytesIO
+    
+    doc = docx.Document()
+    doc.add_heading(f"TRANSCRIPT — {filename}", 0)
+    doc.add_paragraph(f"Tệp gốc: {filename}")
+    doc.add_paragraph(f"Thời gian tạo: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    doc.add_paragraph("-" * 40)
+    
+    for line in text.split("\n"):
+        line = line.strip()
+        if line:
+            doc.add_paragraph(line)
+            
+    file_stream = BytesIO()
+    doc.save(file_stream)
+    file_stream.seek(0)
+    
+    # Chuẩn hóa tên file tải về
+    safe_stem = Path(filename).stem
+    # Loại bỏ ký tự không hợp lệ trong header content-disposition
+    safe_stem = safe_stem.encode("ascii", "ignore").decode("ascii").replace(" ", "_")
+    if not safe_stem:
+        safe_stem = "transcript"
+    docx_name = f"{safe_stem}_transcript.docx"
+    
+    return StreamingResponse(
+        file_stream,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename={docx_name}"}
+    )
 
 
 if __name__ == "__main__":
