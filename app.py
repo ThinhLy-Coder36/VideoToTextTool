@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 # Import transcriber
@@ -17,6 +17,36 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("web-service")
 
 app = FastAPI(title="Video-to-Text Transcription Service")
+
+# Whisper model cache
+whisper_models_cache = {}
+whisper_cache_lock = threading.Lock()
+
+def get_cached_whisper_model(model_size: str):
+    """
+    Truy xuất mô hình Whisper từ cache hoặc tải mới nếu chưa có.
+    Đảm bảo an toàn đa luồng bằng Lock.
+    """
+    with whisper_cache_lock:
+        if model_size not in whisper_models_cache:
+            log.info(f"Mô hình Whisper size '{model_size}' chưa có trong cache. Tiến hành tải...")
+            try:
+                from faster_whisper import WhisperModel
+            except ImportError:
+                raise ImportError("Vui lòng cài đặt: pip install faster-whisper")
+            
+            # Khởi tạo Whisper Model với num_workers=1 để CPU tự tối ưu tính toán
+            model = WhisperModel(
+                model_size,
+                device="cpu",
+                compute_type="int8",
+                num_workers=1
+            )
+            whisper_models_cache[model_size] = model
+            log.info(f"Đã lưu mô hình Whisper size '{model_size}' vào cache thành công.")
+        else:
+            log.info(f"Tìm thấy mô hình Whisper size '{model_size}' trong cache. Sử dụng lại (0s tải từ đĩa).")
+        return whisper_models_cache[model_size]
 
 # Global state to keep track of tasks
 # task_id -> { "status": "processing/completed/failed", "filename": str, "progress": int, "total": int, "text": str, "error": str }
@@ -30,7 +60,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 MODEL_PATH = Path("models") / "vosk-model-small-vn-0.4"
 
 
-def run_transcription_task(task_id: str, video_path: str, filename: str, engine: str, workers: int, is_temp_file: bool):
+def run_transcription_task(task_id: str, video_path: str, filename: str, engine: str, workers: int, is_temp_file: bool, whisper_model: str = "base"):
     """
     Chạy tác vụ trích xuất và nhận dạng giọng nói trong luồng nền.
     """
@@ -44,19 +74,38 @@ def run_transcription_task(task_id: str, video_path: str, filename: str, engine:
 
         # Cấu hình transcriber
         model_dir = str(MODEL_PATH) if (engine == "vosk" and MODEL_PATH.exists()) else None
+        
+        whisper_model_instance = None
+        if engine == "whisper":
+            whisper_model_instance = get_cached_whisper_model(whisper_model)
+            
         transcriber = VideoTranscriber(
             model_path=model_dir,
             language="vi-VN",
             max_workers=workers,
-            chunk_duration=60
+            chunk_duration=60,
+            whisper_model_size=whisper_model,
+            whisper_model_instance=whisper_model_instance
         )
 
         log.info(f"Bắt đầu dịch task {task_id}: {filename}")
-        text = transcriber.transcribe(video_path, progress_callback=progress_callback, engine=engine)
+        
+        audio_filename = f"{task_id}_audio.wav"
+        audio_path = UPLOAD_DIR / audio_filename
+
+        result = transcriber.transcribe(
+            video_path,
+            progress_callback=progress_callback,
+            engine=engine,
+            save_audio_path=str(audio_path),
+            return_segments=True
+        )
         
         # Hoàn thành
         tasks_db[task_id]["status"] = "completed"
-        tasks_db[task_id]["text"] = text
+        tasks_db[task_id]["text"] = result["text"]
+        tasks_db[task_id]["segments"] = result["segments"]
+        tasks_db[task_id]["audio_url"] = f"/api/audio/{task_id}"
         tasks_db[task_id]["progress"] = tasks_db[task_id]["total"] # Đảm bảo 100%
         log.info(f"Hoàn thành task {task_id} thành công ✓")
 
@@ -92,6 +141,7 @@ async def start_transcription(
     video_path: Optional[str] = Form(None),
     engine: str = Form("vosk"),
     workers: int = Form(4),
+    whisper_model: str = Form("base"),
     file: Optional[UploadFile] = File(None)
 ):
     """Bắt đầu tác vụ chuyển đổi video."""
@@ -124,6 +174,8 @@ async def start_transcription(
         "progress": 0,
         "total": 0,
         "text": "",
+        "segments": [],
+        "audio_url": "",
         "error": ""
     }
 
@@ -135,7 +187,8 @@ async def start_transcription(
         filename=filename,
         engine=engine,
         workers=workers,
-        is_temp_file=is_temp_file
+        is_temp_file=is_temp_file,
+        whisper_model=whisper_model
     )
 
     return {"task_id": task_id, "status": "pending"}
@@ -149,10 +202,28 @@ async def get_task_status(task_id: str):
     return tasks_db[task_id]
 
 
+@app.get("/api/audio/{task_id}")
+async def get_audio(task_id: str):
+    """Phục vụ file âm thanh WAV đã trích xuất của task."""
+    audio_path = UPLOAD_DIR / f"{task_id}_audio.wav"
+    if not audio_path.exists():
+        raise HTTPException(status_code=404, detail="Không tìm thấy tệp âm thanh")
+    return FileResponse(audio_path, media_type="audio/wav")
+
+
 if __name__ == "__main__":
     import uvicorn
+    import threading
+    import webbrowser
+
     print("\n" + "="*80)
     print("  DỊCH VỤ CHUYỂN VIDEO THÀNH TEXT OFFLINE ĐANG KHỞI CHẠY...")
-    print("  Vui lòng mở trình duyệt và truy cập: http://127.0.0.1:8000")
+    print("  Trình duyệt web sẽ tự động mở sau vài giây...")
+    print("  Nếu không tự mở, hãy truy cập: http://127.0.0.1:8000")
     print("="*80 + "\n")
+
+    # Tự động mở trình duyệt mặc định sau 1.5 giây
+    threading.Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:8000")).start()
+
     uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=False)
+

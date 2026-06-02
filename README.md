@@ -1,4 +1,16 @@
+---
+title: Video To Text Tool
+emoji: 🎥
+colorFrom: indigo
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+---
+
 # Video-to-Text Transcription Service
+
 
 Chuyển đổi video (mp4, mkv, avi, mov…) thành text — **hoàn toàn offline** với Vosk, không cần AI API.
 

@@ -21,7 +21,7 @@ import argparse
 import tempfile
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
 # Đảm bảo terminal Windows không bị lỗi hiển thị ký tự Unicode tiếng Việt
 if sys.stdout.encoding != 'utf-8':
@@ -252,6 +252,9 @@ def transcribe_chunk_sr(chunk_path: str) -> tuple[int, str]:
     return chunk_idx, text
 
 
+
+
+
 # ===========================================================================
 # Lớp chính: VideoTranscriber
 # ===========================================================================
@@ -277,13 +280,17 @@ class VideoTranscriber:
         chunk_duration: int = 60,
         max_workers: int = 4,
         sample_rate: int = 16000,
+        whisper_model_size: str = "base",
+        whisper_model_instance = None,
     ):
         self.model_path     = model_path
         self.language       = language
         self.chunk_duration = chunk_duration
         self.max_workers    = max_workers
         self.sample_rate    = sample_rate
+        self.whisper_model_size = whisper_model_size
         self._vosk_model    = None
+        self._whisper_model_instance = whisper_model_instance
 
         if model_path:
             self._load_vosk_model(model_path)
@@ -304,7 +311,7 @@ class VideoTranscriber:
             self._vosk_model = None
 
     # ------------------------------------------------------------------
-    def transcribe(self, video_path: str, output_path: Optional[str] = None, progress_callback = None, engine: str = "vosk") -> str:
+    def transcribe(self, video_path: str, output_path: Optional[str] = None, progress_callback = None, engine: str = "vosk", save_audio_path: Optional[str] = None, return_segments: bool = False) -> Union[str, dict]:
         """
         Chuyển đổi video thành text.
 
@@ -314,10 +321,12 @@ class VideoTranscriber:
         output_path : Nếu cung cấp, lưu kết quả vào file này
         progress_callback: Hàm callback nhận vào (done_chunks, total_chunks) để cập nhật tiến trình
         engine      : Công nghệ dịch ("vosk", "whisper", hoặc "google")
+        save_audio_path: Nếu cung cấp, sao chép tệp âm thanh WAV trích xuất được vào đây
+        return_segments: Nếu True, trả về dict gồm {"text": str, "segments": list[dict]} chứa timestamps
 
         Returns
         -------
-        Toàn bộ text nhận dạng được
+        Toàn bộ text nhận dạng được (hoặc dict chứa text và segments)
         """
         video_path = str(Path(video_path).resolve())
         if not os.path.exists(video_path):
@@ -337,14 +346,28 @@ class VideoTranscriber:
             duration = self._get_audio_duration(wav_path)
             log.info(f"Thời lượng audio: {duration/60:.1f} phút")
 
-            # ── Bước 2 & 3: Nhận dạng tùy theo engine ────────────────
-            if engine.lower() == "whisper":
-                full_text = self._transcribe_whisper(wav_path, progress_callback)
-            else:
-                chunk_dir  = os.path.join(tmp_dir, "chunks")
-                chunk_paths = split_wav_into_chunks(wav_path, chunk_dir, self.chunk_duration)
+            # Sao lưu tệp âm thanh WAV nếu có chỉ định đường dẫn lưu
+            if save_audio_path:
+                try:
+                    shutil.copy2(wav_path, save_audio_path)
+                    log.info(f"Đã sao lưu audio tại: {save_audio_path}")
+                except Exception as e:
+                    log.warning(f"Không thể sao lưu file âm thanh WAV: {e}")
 
-                results = {}
+            # ── Bước 2 & 3: Chia nhỏ âm thanh thành chunks ─────────────
+            chunk_dir  = os.path.join(tmp_dir, "chunks")
+            chunk_paths = split_wav_into_chunks(wav_path, chunk_dir, self.chunk_duration)
+
+            # ── Bước 4: Nhận dạng song song tùy theo engine ─────────────
+            results = {}
+            segments_list = []
+
+            if engine.lower() == "whisper":
+                log.info("Dùng Whisper (offline) — Chạy tuần tự tối ưu hóa CPU")
+                model = self._get_whisper_model()
+                # Chạy dịch tuần tự trực tiếp trên file wav_path
+                full_text, segments_list = self._transcribe_whisper_with_segments(wav_path, model, progress_callback)
+            else:
                 if engine.lower() == "vosk" and self._vosk_model:
                     log.info(f"Dùng Vosk (offline) — {len(chunk_paths)} chunks, {self.max_workers} luồng")
                     results = self._transcribe_parallel_vosk(chunk_paths, progress_callback)
@@ -354,9 +377,32 @@ class VideoTranscriber:
                 
                 full_text = self._merge_results(results)
 
+                # Ước lượng mốc thời gian cho Vosk và Google dựa trên vị trí chunk
+                segments_list = []
+                for idx in sorted(results.keys()):
+                    text_chunk = results[idx].strip()
+                    if text_chunk:
+                        formatted_chunk = self._format_by_sentences(text_chunk)
+                        sentences = formatted_chunk.split("\n")
+                        num_sentences = len(sentences)
+                        chunk_start = idx * self.chunk_duration
+                        if num_sentences > 0:
+                            sec_per_sentence = self.chunk_duration / num_sentences
+                            for s_idx, sentence in enumerate(sentences):
+                                s_start = chunk_start + (s_idx * sec_per_sentence)
+                                s_end = chunk_start + ((s_idx + 1) * sec_per_sentence)
+                                segments_list.append({
+                                    "start": round(s_start, 2),
+                                    "end": round(s_end, 2),
+                                    "text": sentence.strip()
+                                })
+
         elapsed = time.time() - start_time
-        # Định dạng văn bản: mỗi câu xuống một dòng
-        full_text = self._format_by_sentences(full_text)
+
+        if not (return_segments and engine.lower() == "whisper"):
+            # Đối với Vosk, Google hoặc khi không cần segments, định dạng lại mỗi câu xuống một dòng
+            full_text = self._format_by_sentences(full_text)
+
         word_count = len(full_text.split())
         log.info(f"{'='*60}")
         log.info(f"Hoàn thành trong {elapsed:.1f}s — {word_count} từ")
@@ -366,38 +412,78 @@ class VideoTranscriber:
         if output_path:
             self._save_output(full_text, output_path, video_path, elapsed, word_count)
 
+        if return_segments:
+            return {"text": full_text, "segments": segments_list}
         return full_text
 
     # ------------------------------------------------------------------
-    def _transcribe_whisper(self, wav_path: str, progress_callback = None) -> str:
-        """Nhận dạng offline cực kỳ chính xác bằng mô hình Whisper cục bộ."""
-        log.info("Đang khởi tạo local Whisper Model (dung lượng base ~140MB)...")
-        try:
-            from faster_whisper import WhisperModel
-        except ImportError:
-            raise ImportError("Vui lòng cài đặt: pip install faster-whisper")
+    def _get_whisper_model(self):
+        if not hasattr(self, "_whisper_model_instance") or self._whisper_model_instance is None:
+            log.info(f"Đang khởi tạo local Whisper Model (kích thước {self.whisper_model_size})...")
+            try:
+                from faster_whisper import WhisperModel
+            except ImportError:
+                raise ImportError("Vui lòng cài đặt: pip install faster-whisper")
+            # Thiết lập num_workers = 1 vì CTranslate2 tự động song song hóa đa nhân CPU tối ưu nhất cho 1 worker
+            self._whisper_model_instance = WhisperModel(
+                self.whisper_model_size,
+                device="cpu",
+                compute_type="int8",
+                num_workers=1
+            )
+        return self._whisper_model_instance
 
-        # Khởi tạo model base chạy trên CPU tối ưu hóa bằng int8
-        model = WhisperModel("base", device="cpu", compute_type="int8")
-        
+    # ------------------------------------------------------------------
+    def _transcribe_whisper_with_segments(self, wav_path: str, model, progress_callback=None) -> tuple[str, list[dict]]:
+        """Nhận dạng toàn bộ file WAV tuần tự bằng Whisper để tối ưu hóa CPU và độ chính xác."""
+        log.info("Bắt đầu transcribe tuần tự bằng Whisper...")
         duration = self._get_audio_duration(wav_path)
-        log.info(f"Bắt đầu dịch offline với Whisper (Tổng thời lượng audio: {int(duration)}s)...")
         
-        # Nhận dạng giọng nói (Whisper tự lọc tạp âm/nhạc nền và nhận dạng có dấu chuẩn xác)
-        segments, info = model.transcribe(wav_path, beam_size=5, language="vi")
+        segments, info = model.transcribe(
+            wav_path,
+            beam_size=5,
+            language="vi",
+            word_timestamps=True
+        )
         
-        text_parts = []
+        segments_list = []
+        full_text_parts = []
+        
         for segment in segments:
-            text_parts.append(segment.text)
-            # Cập nhật tiến trình theo thời gian thực (giây đã dịch / tổng giây)
-            if progress_callback and duration > 0:
-                try:
-                    done_sec = min(int(segment.end), int(duration))
-                    progress_callback(done_sec, int(duration))
-                except Exception as e:
-                    log.warning(f"Lỗi progress_callback Whisper: {e}")
-                    
-        return " ".join(text_parts)
+            words_list = []
+            if segment.words:
+                for w in segment.words:
+                    words_list.append({
+                        "word": w.word.strip(),
+                        "start": round(w.start, 2),
+                        "end": round(w.end, 2)
+                    })
+            
+            text = segment.text.strip()
+            if text:
+                if len(text) > 1:
+                    text = text[0].upper() + text[1:]
+                else:
+                    text = text.upper()
+                
+                seg_dict = {
+                    "start": round(segment.start, 2),
+                    "end": round(segment.end, 2),
+                    "text": text,
+                    "words": words_list
+                }
+                segments_list.append(seg_dict)
+                full_text_parts.append(text)
+                
+                if progress_callback:
+                    try:
+                        done_sec = min(round(segment.end, 2), round(duration, 2))
+                        progress_callback(done_sec, round(duration, 2))
+                    except Exception as e:
+                        log.warning(f"Lỗi progress_callback: {e}")
+        
+        full_text = "\n".join(full_text_parts)
+        return full_text, segments_list
 
     # ------------------------------------------------------------------
     def _transcribe_parallel_vosk(self, chunk_paths: list[str], progress_callback = None) -> dict[int, str]:
@@ -561,6 +647,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=16000,
         help="Sample rate audio (Hz). Mặc định: 16000",
     )
+    p.add_argument(
+        "--whisper-model",
+        default="base",
+        choices=["tiny", "base", "small", "medium", "large-v3"],
+        help="Kích thước mô hình Whisper (mặc định: base)",
+    )
     return p
 
 
@@ -581,6 +673,7 @@ def main():
         chunk_duration= args.chunk,
         max_workers   = args.workers,
         sample_rate   = args.rate,
+        whisper_model_size = args.whisper_model,
     )
 
     # Chạy

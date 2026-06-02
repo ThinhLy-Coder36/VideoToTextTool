@@ -197,7 +197,7 @@
         /* Config Grid */
         .config-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
             gap: 1.5rem;
             margin-top: 1.5rem;
             margin-bottom: 2rem;
@@ -445,6 +445,76 @@
                 flex-direction: column;
             }
         }
+        .time-badge:hover {
+            background: var(--primary) !important;
+            color: #fff !important;
+            box-shadow: 0 0 8px var(--primary-glow);
+        }
+        .word {
+            cursor: pointer;
+            padding: 0.05rem 0.15rem;
+            border-radius: 4px;
+            transition: all 0.15s ease;
+            display: inline-block;
+            color: #e5e7eb;
+        }
+        .word:hover {
+            background: rgba(255, 255, 255, 0.12);
+            text-decoration: underline;
+            color: #fff;
+        }
+        .word.active {
+            color: #fbbf24 !important;
+            font-weight: 700;
+            background: rgba(251, 191, 36, 0.15);
+            box-shadow: 0 0 6px rgba(251, 191, 36, 0.25);
+        }
+        .transcript-line {
+            padding: 0.4rem 0.6rem;
+            border-radius: 10px;
+            transition: all 0.25s ease;
+            border-left: 3px solid transparent;
+        }
+        .transcript-line.active-line {
+            background: rgba(99, 102, 241, 0.08);
+            border-left: 3px solid var(--primary);
+        }
+        
+        /* Hoạt họa chú chuột gồng mình rặn chữ */
+        @keyframes squeezeAndShake {
+            0% {
+                transform: scale(1) rotate(0deg);
+            }
+            15% {
+                transform: scale(0.95, 1.05) rotate(-3deg);
+            }
+            30% {
+                transform: scale(1.05, 0.9) rotate(3deg);
+            }
+            45% {
+                transform: scale(0.9, 1.1) rotate(-3deg) translateY(-8px);
+            }
+            60% {
+                transform: scale(1.05, 0.95) rotate(3deg) translateY(0);
+            }
+            75% {
+                transform: scale(0.98, 1.02) rotate(-1deg);
+            }
+            100% {
+                transform: scale(1) rotate(0deg);
+            }
+        }
+        
+        @keyframes pulseText {
+            0%, 100% {
+                opacity: 0.8;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 1;
+                transform: scale(1.03);
+            }
+        }
     </style>
 </head>
 <body>
@@ -452,7 +522,7 @@
 <div class="container">
     <header>
         <h1>Offline Transcription Service</h1>
-        <p>Hỗ trợ video lên tới 40 phút - Xử lý đa luồng siêu tốc</p>
+        <p>Hỗ trợ video lên tới 60 phút - Xử lý đa luồng siêu tốc cùng BoBo nhé (:</p>
     </header>
 
     <!-- Main Transcription Hub -->
@@ -492,10 +562,20 @@
             <div class="config-grid">
                 <div class="config-item">
                     <label for="engine">Công nghệ nhận dạng:</label>
-                    <select id="engine">
+                    <select id="engine" onchange="toggleWhisperModel()">
                         <option value="whisper" selected>Whisper - Tiếng Việt (Offline 100% - Khuyên dùng)</option>
                         <option value="vosk">Vosk - Tiếng Việt (Offline 100% - Tốc độ nhanh)</option>
                         <option value="google">Google Cloud Speech (Trực tuyến - Cần Internet)</option>
+                    </select>
+                </div>
+                <div class="config-item" id="whisper-model-container">
+                    <label for="whisper-model">Kích thước mô hình Whisper:</label>
+                    <select id="whisper-model">
+                        <option value="tiny">Tiny (39M - Cực nhanh, chính xác thấp)</option>
+                        <option value="base" selected>Base (74M - Nhanh, chính xác trung bình)</option>
+                        <option value="small">Small (244M - Cân bằng tốt)</option>
+                        <option value="medium">Medium (769M - Độ chính xác cao)</option>
+                        <option value="large-v3">Large V3 (1.5B - Chính xác nhất như Notta)</option>
                     </select>
                 </div>
                 <div class="config-item">
@@ -525,12 +605,47 @@
         </h2>
         <div id="tasks-container"></div>
     </div>
+
+    <!-- Footer Branding -->
+    <footer style="text-align: center; margin-top: 4rem; padding-top: 2rem; border-top: 1px solid var(--border-color); color: var(--text-muted); font-size: 0.85rem; display: flex; flex-direction: column; gap: 0.5rem; animation: fadeIn 1s ease-out;">
+        <p>Developed by <span style="color: var(--primary); font-weight: 600;">Thịnh Lý (coder36)</span> &copy; 2026</p>
+        <p style="font-size: 0.75rem; opacity: 0.7;">High-performance offline speech recognition solution with BoBo</p>
+    </footer>
 </div>
 
 <script>
     let activeTab = 'path';
     let selectedFile = null;
     let pollInterval = null;
+
+    function toggleWhisperModel() {
+        const engine = document.getElementById('engine').value;
+        const container = document.getElementById('whisper-model-container');
+        if (engine === 'whisper') {
+            container.style.display = 'flex';
+        } else {
+            container.style.display = 'none';
+        }
+    }
+
+    // Khởi tạo trạng thái khi tải trang
+    window.addEventListener('DOMContentLoaded', () => {
+        toggleWhisperModel();
+    });
+
+    function formatTime(seconds) {
+        const m = Math.floor(seconds / 60);
+        const s = Math.floor(seconds % 60);
+        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+
+    function seekAudio(audioId, seconds) {
+        const audio = document.getElementById(audioId);
+        if (audio) {
+            audio.currentTime = seconds;
+            audio.play().catch(err => console.log("Không thể tự động phát nhạc: ", err));
+        }
+    }
 
     function switchTab(tab) {
         activeTab = tab;
@@ -586,6 +701,11 @@
         const formData = new FormData();
         formData.append('engine', engine);
         formData.append('workers', workers);
+        
+        if (engine === 'whisper') {
+            const whisperModel = document.getElementById('whisper-model').value;
+            formData.append('whisper_model', whisperModel);
+        }
 
         if (activeTab === 'path') {
             const pathVal = document.getElementById('video-path').value.trim();
@@ -698,7 +818,32 @@
         if (task.status === 'completed') {
             innerHTML += `
                 <div class="result-viewer">
-                    <textarea class="result-textarea" readonly id="text-${taskId}">${task.text}</textarea>
+                    <!-- Trình phát âm thanh tương tác -->
+                    <audio id="audio-${taskId}" controls src="${task.audio_url}" style="width: 100%; margin-bottom: 1.25rem; border-radius: 12px; outline: none;"></audio>
+                    
+                    <!-- Textarea ẩn phục vụ việc copy/download -->
+                    <textarea class="result-textarea" style="display: none;" id="text-${taskId}">${task.text}</textarea>
+                    
+                    <!-- Khung hiển thị các câu kèm mốc thời gian bấm được -->
+                    <div class="transcript-container" style="max-height: 350px; overflow-y: auto; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border-color); border-radius: 14px; padding: 1.25rem; text-align: left; line-height: 1.8; margin-bottom: 1.25rem; scroll-behavior: smooth;">
+                        ${task.segments && task.segments.length > 0 ? 
+                            task.segments.map(seg => `
+                                <div class="transcript-line" id="line-${taskId}-${seg.start.toString().replace('.', '_')}" data-start="${seg.start}" data-end="${seg.end}" style="margin-bottom: 0.5rem; display: flex; align-items: flex-start; gap: 0.75rem;">
+                                    <button class="time-badge" onclick="seekAudio('audio-${taskId}', ${seg.start})" style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); color: var(--primary); font-family: monospace; font-size: 0.8rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 6px; cursor: pointer; transition: all 0.2s ease; white-space: nowrap; margin-top: 0.2rem; border-style: solid;">
+                                        ${formatTime(seg.start)}
+                                    </button>
+                                    <span class="segment-text" style="font-size: 0.95rem;">
+                                        ${seg.words && seg.words.length > 0 ? 
+                                            seg.words.map(w => `<span class="word" data-start="${w.start}" data-end="${w.end}" onclick="seekAudio('audio-${taskId}', ${w.start})">${w.word}</span>`).join(' ')
+                                            : `<span class="fallback-sentence" data-start="${seg.start}" data-end="${seg.end}">${seg.text}</span>`
+                                        }
+                                    </span>
+                                </div>
+                            `).join('') 
+                            : `<div style="color: var(--text-muted);">Không có dữ liệu phân đoạn thời gian.</div>`
+                        }
+                    </div>
+
                     <div class="button-row">
                         <button class="btn-secondary" onclick="copyText('text-${taskId}')">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -727,15 +872,105 @@
         } else {
             // Processing state logs
             const selectedEngine = document.getElementById('engine').value.toUpperCase();
+            let modelInfo = '';
+            if (selectedEngine === 'WHISPER') {
+                const modelSize = document.getElementById('whisper-model').value.toUpperCase();
+                modelInfo = ` (Mô hình: ${modelSize})`;
+            }
+
+            // Xác định dòng text hài hước dựa trên phần trăm tiến trình
+            let funnyText = "Đang khởi tạo...";
+            if (pct < 50) {
+                funnyText = "mình đang rặn ra cho bạn đây...";
+            } else if (pct >= 50 && pct < 70) {
+                funnyText = "đang rặn được một nửa rồi, cố lên...";
+            } else {
+                funnyText = "đợi xíu rặn sắp ra ròi...";
+            }
+
             innerHTML += `
+                <div class="processing-container" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 1.5rem 0; gap: 1rem;">
+                    <!-- Hoạt họa chú chuột Hamster dễ thương đang gồng mình rặn chữ -->
+                    <div class="cute-loader-wrapper" style="position: relative; width: 100px; height: 100px; animation: squeezeAndShake 1.2s infinite ease-in-out;">
+                        <svg viewBox="0 0 100 100" width="100" height="100" style="display: block;">
+                            <!-- Thân chuột -->
+                            <ellipse cx="50" cy="55" rx="35" ry="32" fill="#f59e0b" />
+                            <ellipse cx="50" cy="62" rx="25" ry="20" fill="#fff" />
+                            <!-- Tai -->
+                            <ellipse cx="25" cy="28" rx="8" ry="10" fill="#f59e0b" transform="rotate(-15 25 28)" />
+                            <ellipse cx="25" cy="28" rx="4" ry="6" fill="#fca5a5" transform="rotate(-15 25 28)" />
+                            <ellipse cx="75" cy="28" rx="8" ry="10" fill="#f59e0b" transform="rotate(15 75 28)" />
+                            <ellipse cx="75" cy="28" rx="4" ry="6" fill="#fca5a5" transform="rotate(15 75 28)" />
+                            <!-- Mắt nhắm tịt gồng sức > < -->
+                            <path d="M 33 48 L 41 52 L 33 56" stroke="#1e293b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                            <path d="M 67 48 L 59 52 L 67 56" stroke="#1e293b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                            <!-- Mũi & Miệng -->
+                            <polygon points="50,57 47,54 53,54" fill="#f43f5e" />
+                            <path d="M 46 62 Q 50 65 50 62 Q 50 65 54 62" stroke="#1e293b" stroke-width="2" stroke-linecap="round" fill="none" />
+                            <!-- Má hồng do gồng quá sức -->
+                            <circle cx="28" cy="58" r="6" fill="#ef4444" opacity="0.6" />
+                            <circle cx="72" cy="58" r="6" fill="#ef4444" opacity="0.6" />
+                            <!-- Tay -->
+                            <ellipse cx="30" cy="70" rx="5" ry="4" fill="#f59e0b" />
+                            <ellipse cx="70" cy="70" rx="5" ry="4" fill="#f59e0b" />
+                            <!-- Giọt mồ hôi gồng -->
+                            <path d="M 72 38 Q 70 44 74 44 Q 76 44 74 38" fill="#38bdf8" />
+                        </svg>
+                    </div>
+                    <div class="funny-status-text" style="color: #fbbf24; font-size: 1.1rem; font-weight: 600; text-align: center; text-shadow: 0 0 10px rgba(251,191,36,0.3); animation: pulseText 1.5s infinite ease-in-out;">
+                        ${funnyText}
+                    </div>
+                </div>
+
                 <div class="log-preview">
                     [System] Đang trích xuất và xử lý âm thanh WAV...<br>
-                    [${selectedEngine}] Đang chạy mô hình nhận dạng giọng nói offline/online... (Tiến trình: ${pct}%)
+                    [${selectedEngine}] Đang chạy mô hình nhận dạng giọng nói offline/online${modelInfo}... (Tiến trình: ${pct}%)
                 </div>
             `;
         }
 
         card.innerHTML = innerHTML;
+
+        // Đăng ký sự kiện timeupdate cho trình phát âm thanh sau khi vẽ xong giao diện hoàn thành
+        if (task.status === 'completed') {
+            const audio = document.getElementById(`audio-${taskId}`);
+            const container = card.querySelector('.transcript-container');
+            if (audio && container) {
+                audio.addEventListener('timeupdate', () => {
+                    const curTime = audio.currentTime;
+
+                    // 1. Tô sáng từng từ đơn lẻ (nếu có dữ liệu từ mô hình Whisper)
+                    const words = container.querySelectorAll('.word');
+                    if (words.length > 0) {
+                        words.forEach(w => {
+                            const start = parseFloat(w.getAttribute('data-start'));
+                            const end = parseFloat(w.getAttribute('data-end'));
+                            if (curTime >= start && curTime <= end) {
+                                w.classList.add('active');
+                            } else {
+                                w.classList.remove('active');
+                            }
+                        });
+                    }
+
+                    // 2. Tô sáng cả dòng hiện tại và tự động cuộn
+                    const lines = container.querySelectorAll('.transcript-line');
+                    lines.forEach(line => {
+                        const start = parseFloat(line.getAttribute('data-start'));
+                        const end = parseFloat(line.getAttribute('data-end'));
+                        if (curTime >= start && curTime <= end) {
+                            if (!line.classList.contains('active-line')) {
+                                line.classList.add('active-line');
+                                // Tự động cuộn mượt mà dòng đang nói vào giữa vùng nhìn thấy của container
+                                line.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            }
+                        } else {
+                            line.classList.remove('active-line');
+                        }
+                    });
+                });
+            }
+        }
     }
 
     function copyText(id) {
