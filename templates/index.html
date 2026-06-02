@@ -1070,7 +1070,12 @@
     }
 
     function downloadDocx(filename, taskId) {
-        window.location.href = `/api/export/docx/${taskId}`;
+        const link = document.createElement('a');
+        link.href = `/api/export/docx/${taskId}`;
+        link.download = `${filename.split('.')[0]}_transcript.docx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     }
 </script>
 </body>
