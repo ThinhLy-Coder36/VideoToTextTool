@@ -364,7 +364,7 @@ class VideoTranscriber:
             segments_list = []
 
             if engine.lower() == "groq":
-                log.info("Dùng Whisper Cloud API (Groq) — Tốc độ siêu tốc")
+                log.info("Dùng Chang Láo (Groq) — Tốc độ siêu tốc")
                 api_keys = self._whisper_model_instance
                 if not isinstance(api_keys, list):
                     api_keys = [api_keys] if api_keys else []
