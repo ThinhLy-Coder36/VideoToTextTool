@@ -368,7 +368,72 @@ class VideoTranscriber:
                 api_keys = self._whisper_model_instance
                 if not isinstance(api_keys, list):
                     api_keys = [api_keys] if api_keys else []
-                full_text, segments_list = self._transcribe_whisper_via_groq_api(wav_path, api_keys, progress_callback)
+                
+                # Kiểm tra dung lượng file WAV gốc
+                wav_size = os.path.getsize(wav_path)
+                max_size_limit = 24 * 1024 * 1024 # 24 MB
+                
+                if wav_size <= max_size_limit:
+                    log.info(f"Dung lượng file WAV ({wav_size/1024/1024:.2f}MB) dưới 24MB. Gửi trực tiếp cả file.")
+                    full_text, segments_list = self._transcribe_whisper_via_groq_api(wav_path, api_keys, progress_callback)
+                else:
+                    log.info(f"Dung lượng file WAV ({wav_size/1024/1024:.2f}MB) vượt quá 24MB. Tự động chuyển sang chế độ dịch theo phân đoạn (chunking) để tránh giới hạn API.")
+                    
+                    results = {}
+                    active_keys = list(api_keys)
+                    total_chunks = len(chunk_paths)
+                    
+                    for chunk_idx, cp in enumerate(chunk_paths):
+                        log.info(f"Đang dịch chunk {chunk_idx + 1}/{total_chunks} qua Groq API...")
+                        try:
+                            chunk_text, chunk_segs = self._transcribe_whisper_via_groq_api(
+                                cp, 
+                                active_keys, 
+                                progress_callback=None
+                            )
+                            results[chunk_idx] = chunk_segs
+                            
+                            if progress_callback:
+                                try:
+                                    progress_callback(chunk_idx + 1, total_chunks)
+                                except Exception as e:
+                                    log.warning(f"Lỗi progress_callback: {e}")
+                        except Exception as e:
+                            log.error(f"Thất bại khi dịch chunk {chunk_idx + 1}: {e}")
+                            raise e
+                            
+                    # Hợp nhất kết quả các chunk
+                    merged_segments = []
+                    for idx in sorted(results.keys()):
+                        chunk_start = idx * self.chunk_duration
+                        seg_list = results[idx]
+                        for seg in seg_list:
+                            abs_start = round(chunk_start + seg["start"], 2)
+                            abs_end = round(chunk_start + seg["end"], 2)
+                            
+                            abs_words = []
+                            for w in seg.get("words", []):
+                                abs_words.append({
+                                    "word": w["word"],
+                                    "start": round(chunk_start + w["start"], 2),
+                                    "end": round(chunk_start + w["end"], 2)
+                                })
+                                
+                            text = seg["text"].strip()
+                            if text:
+                                if len(text) > 1:
+                                    text = text[0].upper() + text[1:]
+                                else:
+                                    text = text.upper()
+                                    
+                                merged_segments.append({
+                                    "start": abs_start,
+                                    "end": abs_end,
+                                    "text": text,
+                                    "words": abs_words
+                                })
+                    full_text = "\n".join(seg["text"] for seg in merged_segments)
+                    segments_list = merged_segments
             elif engine.lower() == "whisper":
                 log.info("Dùng Whisper (offline) — Chạy tuần tự tối ưu hóa CPU")
                 model = self._get_whisper_model()
@@ -519,8 +584,9 @@ class VideoTranscriber:
             
             last_error = None
             
-            # Thử từng key trong danh sách xoay vòng
-            for idx, key in enumerate(api_keys):
+            # Thử từng key trong danh sách xoay vòng (sử dụng bản sao để lặp, nhưng sửa đổi list gốc khi key lỗi)
+            for key in list(api_keys):
+                idx = api_keys.index(key) if key in api_keys else 0
                 log.info(f"Đang thử sử dụng API Key thứ {idx + 1}...")
                 headers = {
                     "Authorization": f"Bearer {key}"
@@ -536,6 +602,8 @@ class VideoTranscriber:
                         last_error = "Rate Limit (HTTP 429)"
                         if getattr(self, "key_status_callback", None):
                             self.key_status_callback(key, "Rate Limited")
+                        if key in api_keys:
+                            api_keys.remove(key)
                         # Quay lại file pointer về đầu để gửi lại
                         f.seek(0)
                         continue
@@ -545,6 +613,8 @@ class VideoTranscriber:
                         last_error = f"HTTP {response.status_code}: {response.text}"
                         if getattr(self, "key_status_callback", None):
                             self.key_status_callback(key, "Rate Limited")
+                        if key in api_keys:
+                            api_keys.remove(key)
                         f.seek(0)
                         continue
                         
@@ -597,6 +667,8 @@ class VideoTranscriber:
                 except requests.exceptions.RequestException as req_err:
                     log.warning(f"Lỗi kết nối khi gọi API với Key thứ {idx + 1}: {req_err}. Đang chuyển sang key tiếp theo...")
                     last_error = str(req_err)
+                    if key in api_keys:
+                        api_keys.remove(key)
                     f.seek(0)
                     continue
             
