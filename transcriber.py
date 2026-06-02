@@ -581,11 +581,13 @@ class VideoTranscriber:
             files = {
                 "file": (os.path.basename(wav_path), f, "audio/wav")
             }
-            data = {
-                "model": "whisper-large-v3",
-                "response_format": "verbose_json",
-                "language": "vi"
-            }
+            data = [
+                ("model", "whisper-large-v3"),
+                ("response_format", "verbose_json"),
+                ("language", "vi"),
+                ("timestamp_granularities[]", "word"),
+                ("timestamp_granularities[]", "segment"),
+            ]
             
             last_error = None
             
@@ -634,17 +636,32 @@ class VideoTranscriber:
                     
                     full_text = result.get("text", "").strip()
                     raw_segments = result.get("segments", [])
+                    all_words = result.get("words", [])
                     
                     segments_list = []
                     for seg in raw_segments:
                         words_list = []
-                        if "words" in seg:
+                        # 1. Lấy từ trường "words" bên trong segment nếu có
+                        if "words" in seg and seg["words"]:
                             for w in seg["words"]:
                                 words_list.append({
                                     "word": w.get("word", "").strip(),
                                     "start": round(w.get("start", 0), 2),
                                     "end": round(w.get("end", 0), 2)
                                 })
+                        # 2. Hoặc phân bổ từ danh sách "words" ở root JSON
+                        elif all_words:
+                            seg_start = seg.get("start", 0)
+                            seg_end = seg.get("end", 0)
+                            for w in all_words:
+                                w_start = w.get("start", 0)
+                                # Nếu thời gian của từ nằm trong khoảng của segment (cho phép lệch nhỏ 0.05s)
+                                if seg_start - 0.05 <= w_start < seg_end + 0.05:
+                                    words_list.append({
+                                        "word": w.get("word", "").strip(),
+                                        "start": round(w_start, 2),
+                                        "end": round(w.get("end", 0), 2)
+                                    })
                         
                         text = seg.get("text", "").strip()
                         if text:
