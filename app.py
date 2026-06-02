@@ -9,6 +9,16 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTa
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
+# Tự động đọc file .env ở local nếu có
+env_path = Path(".env")
+if env_path.exists():
+    with open(env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ[k.strip()] = v.strip()
+
 # Import transcriber
 from transcriber import VideoTranscriber
 
@@ -56,8 +66,9 @@ tasks_db = {}
 groq_keys_status = {}
 
 def init_groq_keys():
-    api_keys_str = os.getenv("GROQ_API_KEY", "")
-    keys = [k.strip() for k in api_keys_str.split(",") if k.strip()]
+    api_keys_str = os.getenv("GROQ_API_KEY", "") or os.getenv("ROG_API_KEY", "")
+    # Thay thế xuống dòng bằng dấu phẩy và phân tách các keys
+    keys = [k.strip() for k in api_keys_str.replace("\n", ",").replace("\r", ",").split(",") if k.strip()]
     # Dọn dẹp các key không còn cấu hình
     for k in list(groq_keys_status.keys()):
         if k not in keys:
@@ -109,9 +120,9 @@ def run_transcription_task(task_id: str, video_path: str, filename: str, engine:
         if engine == "whisper":
             whisper_model_instance = get_cached_whisper_model(whisper_model)
         elif engine == "groq":
-            # Đọc danh sách API Keys ngăn cách bằng dấu phẩy
-            api_keys_str = os.getenv("GROQ_API_KEY", "")
-            whisper_model_instance = [k.strip() for k in api_keys_str.split(",") if k.strip()]
+            # Đọc danh sách API Keys ngăn cách bằng dấu phẩy hoặc xuống dòng
+            api_keys_str = os.getenv("GROQ_API_KEY", "") or os.getenv("ROG_API_KEY", "")
+            whisper_model_instance = [k.strip() for k in api_keys_str.replace("\n", ",").replace("\r", ",").split(",") if k.strip()]
             
         transcriber = VideoTranscriber(
             model_path=model_dir,

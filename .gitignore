@@ -40,3 +40,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Environment variables
+.env
+
