@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video to Text Converter - Premium Offline Service</title>
+    <title>Video / Audio to Text Converter - Premium Offline Service</title>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -527,13 +527,13 @@
 <div class="container">
     <header>
         <h1>Offline Transcription Service</h1>
-        <p>Hỗ trợ video lên tới 60 phút - Xử lý đa luồng siêu tốc cùng BoBo nhé (:</p>
+        <p>Hỗ trợ tệp video/audio lên tới 60 phút - Xử lý đa luồng siêu tốc cùng BoBo nhé (:</p>
     </header>
 
     <!-- Main Transcription Hub -->
     <div class="glass-card">
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('upload')">Kéo & Thả Video</button>
+            <button class="tab-btn active" onclick="switchTab('upload')">Kéo & Thả Video / Audio</button>
             <button class="tab-btn" onclick="switchTab('path')">Sử dụng File Path (Nhanh nhất)</button>
         </div>
 
@@ -546,19 +546,19 @@
                         <polyline points="17 8 12 3 7 8"></polyline>
                         <line x1="12" y1="3" x2="12" y2="15"></line>
                     </svg>
-                    <p id="upload-status">Kéo & Thả video của bạn vào đây hoặc click để chọn tệp</p>
-                    <span>Hỗ trợ MP4, MKV, AVI, MOV...</span>
-                    <input type="file" id="file-input" class="file-input" accept="video/*" onchange="handleFileSelect(event)">
+                    <p id="upload-status">Kéo & Thả video/audio của bạn vào đây hoặc click để chọn tệp</p>
+                    <span>Hỗ trợ MP4, MKV, AVI, MOV, MP3, WAV, M4A...</span>
+                    <input type="file" id="file-input" class="file-input" accept="video/*,audio/*" onchange="handleFileSelect(event)">
                 </div>
             </div>
 
             <!-- TAB Content 2: Local Path -->
             <div id="tab-path" class="tab-content">
                 <div class="path-input-group">
-                    <label for="video-path">Đường dẫn file video trên máy tính của bạn:</label>
-                    <input type="text" id="video-path" class="input-field" placeholder="Ví dụ: E:\Downloads\meeting.mp4">
+                    <label for="video-path">Đường dẫn file video/audio trên máy tính của bạn:</label>
+                    <input type="text" id="video-path" class="input-field" placeholder="Ví dụ: E:\Downloads\meeting.mp4 hoặc E:\Music\audio.mp3">
                     <span style="font-size: 0.8rem; color: var(--text-muted); margin-top: -0.25rem;">
-                        ⚠️ Ưu tiên dán đường dẫn trực tiếp đối với video dung lượng lớn để tránh tải tệp tốn dung lượng bộ nhớ.
+                        ⚠️ Ưu tiên dán đường dẫn trực tiếp đối với tệp dung lượng lớn để tránh tải tệp tốn dung lượng bộ nhớ.
                     </span>
                 </div>
             </div>
@@ -614,7 +614,7 @@
             </div>
 
             <button type="submit" class="btn-submit" id="submit-btn">
-                <span>Bắt đầu chuyển đổi Video thành Văn bản</span>
+                <span>Bắt đầu chuyển đổi Video/Audio thành Văn bản</span>
             </button>
         </form>
     </div>
@@ -793,13 +793,13 @@
         if (activeTab === 'path') {
             const pathVal = document.getElementById('video-path').value.trim();
             if (!pathVal) {
-                alert('Vui lòng nhập đường dẫn video!');
+                alert('Vui lòng nhập đường dẫn video/audio!');
                 return;
             }
             formData.append('video_path', pathVal);
         } else {
             if (!selectedFile) {
-                alert('Vui lòng chọn hoặc kéo thả một video!');
+                alert('Vui lòng chọn hoặc kéo thả một video/audio!');
                 return;
             }
             formData.append('file', selectedFile);
