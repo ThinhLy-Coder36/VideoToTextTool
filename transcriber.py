@@ -228,7 +228,7 @@ def transcribe_chunk_vosk(chunk_path: str, model) -> tuple[int, str]:
 # Bước 4: Nhận dạng bằng SpeechRecognition (fallback / Google Web Speech)
 # ===========================================================================
 
-def transcribe_chunk_sr(chunk_path: str) -> tuple[int, str]:
+def transcribe_chunk_sr(chunk_path: str, language: str = "vi-VN") -> tuple[int, str]:
     """
     Fallback: Dùng SpeechRecognition + Google Web Speech API.
     Cần kết nối internet.
@@ -242,7 +242,7 @@ def transcribe_chunk_sr(chunk_path: str) -> tuple[int, str]:
         audio = recognizer.record(source)
 
     try:
-        text = recognizer.recognize_google(audio, language="vi-VN")
+        text = recognizer.recognize_google(audio, language=language)
     except sr.UnknownValueError:
         text = ""
     except sr.RequestError as e:
@@ -516,10 +516,11 @@ class VideoTranscriber:
         log.info("Bắt đầu transcribe tuần tự bằng Whisper...")
         duration = self._get_audio_duration(wav_path)
         
+        whisper_lang = self.language.split("-")[0]
         segments, info = model.transcribe(
             wav_path,
             beam_size=5,
-            language="vi",
+            language=whisper_lang,
             word_timestamps=True
         )
         
@@ -584,7 +585,7 @@ class VideoTranscriber:
             data = [
                 ("model", "whisper-large-v3"),
                 ("response_format", "verbose_json"),
-                ("language", "vi"),
+                ("language", self.language.split("-")[0]),
                 ("timestamp_granularities[]", "word"),
                 ("timestamp_granularities[]", "segment"),
             ]
@@ -724,10 +725,19 @@ class VideoTranscriber:
     def _transcribe_parallel_sr(self, chunk_paths: list[str], progress_callback = None) -> dict[int, str]:
         results = {}
         total   = len(chunk_paths)
+        
+        # Map "vi" to "vi-VN" and "en" to "en-US"
+        google_lang = "vi-VN"
+        if "en" in self.language.lower():
+            google_lang = "en-US"
+        elif "vi" in self.language.lower():
+            google_lang = "vi-VN"
+        else:
+            google_lang = self.language
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {
-                executor.submit(transcribe_chunk_sr, cp): cp
+                executor.submit(transcribe_chunk_sr, cp, google_lang): cp
                 for cp in chunk_paths
             }
             for future in as_completed(futures):

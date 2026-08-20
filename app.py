@@ -101,7 +101,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 MODEL_PATH = Path("models") / "vosk-model-small-vn-0.4"
 
 
-def run_transcription_task(task_id: str, video_path: str, filename: str, engine: str, workers: int, is_temp_file: bool, whisper_model: str = "base"):
+def run_transcription_task(task_id: str, video_path: str, filename: str, engine: str, workers: int, is_temp_file: bool, whisper_model: str = "base", language: str = "vi"):
     """
     Chạy tác vụ trích xuất và nhận dạng giọng nói trong luồng nền.
     """
@@ -113,8 +113,25 @@ def run_transcription_task(task_id: str, video_path: str, filename: str, engine:
             tasks_db[task_id]["progress"] = done
             tasks_db[task_id]["total"] = total
 
-        # Cấu hình transcriber
-        model_dir = str(MODEL_PATH) if (engine == "vosk" and MODEL_PATH.exists()) else None
+        # Cấu hình model Vosk tự động tìm thư mục phù hợp theo ngôn ngữ vi hoặc en
+        model_dir = None
+        if engine == "vosk":
+            models_path = Path("models")
+            if models_path.exists():
+                for path in models_path.iterdir():
+                    if path.is_dir():
+                        name_lower = path.name.lower()
+                        if language == "vi" and ("vn" in name_lower or "vietnamese" in name_lower):
+                            model_dir = str(path)
+                            break
+                        elif language == "en" and ("en" in name_lower or "english" in name_lower):
+                            model_dir = str(path)
+                            break
+            # Fallback nếu không quét được thư mục tự động
+            if not model_dir:
+                fallback_path = models_path / ("vosk-model-small-vn-0.4" if language == "vi" else "vosk-model-small-en-us-0.15")
+                if fallback_path.exists():
+                    model_dir = str(fallback_path)
         
         whisper_model_instance = None
         if engine == "whisper":
@@ -126,7 +143,7 @@ def run_transcription_task(task_id: str, video_path: str, filename: str, engine:
             
         transcriber = VideoTranscriber(
             model_path=model_dir,
-            language="vi-VN",
+            language=language,
             max_workers=workers,
             chunk_duration=60,
             whisper_model_size=whisper_model,
@@ -189,6 +206,7 @@ async def start_transcription(
     engine: str = Form("vosk"),
     workers: int = Form(4),
     whisper_model: str = Form("base"),
+    language: str = Form("vi"),
     file: Optional[UploadFile] = File(None)
 ):
     """Bắt đầu tác vụ chuyển đổi video."""
@@ -235,7 +253,8 @@ async def start_transcription(
         engine=engine,
         workers=workers,
         is_temp_file=is_temp_file,
-        whisper_model=whisper_model
+        whisper_model=whisper_model,
+        language=language
     )
 
     return {"task_id": task_id, "status": "pending"}

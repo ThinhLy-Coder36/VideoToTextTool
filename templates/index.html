@@ -574,6 +574,13 @@
                         <option value="google">Google Cloud Speech (Trực tuyến - Cần Internet)</option>
                     </select>
                 </div>
+                <div class="config-item">
+                    <label for="language">Ngôn ngữ nhận dạng:</label>
+                    <select id="language">
+                        <option value="vi" selected>Tiếng Việt (Vietnamese)</option>
+                        <option value="en">Tiếng Anh (English)</option>
+                    </select>
+                </div>
                 <div class="config-item" id="whisper-model-container">
                     <label for="whisper-model">Kích thước mô hình Whisper:</label>
                     <select id="whisper-model">
@@ -770,11 +777,13 @@
         
         const engine = document.getElementById('engine').value;
         const workers = document.getElementById('workers').value;
+        const language = document.getElementById('language').value;
         const submitBtn = document.getElementById('submit-btn');
         
         const formData = new FormData();
         formData.append('engine', engine);
         formData.append('workers', workers);
+        formData.append('language', language);
         
         if (engine === 'whisper') {
             const whisperModel = document.getElementById('whisper-model').value;
